@@ -22,7 +22,7 @@ export default class UITelop extends Container {
     const style = new TextStyle({
       align: 'center',
       fill: '#FFFFFF',
-      fontFamily: "'FOT Rodin NTLG Pro', 'MiSans Medium'",
+      fontFamily: "'MiSans Medium', 'FOT Rodin NTLG Pro'",
       fontSize: screen_height / 23,
       textBaseline: 'bottom'
     })
