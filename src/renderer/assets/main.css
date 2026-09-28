@@ -5,6 +5,13 @@
   src: url('fonts/FOT-RodinNTLGPro-DB.otf') format('opentype');
 }
 
+/* 中文后备字体：Rodin（日文字体）缺失的简体字形统一回退到 MiSans Medium，
+   避免逐字落到系统字体导致粗细混杂（Linux 上无微软雅黑兜底） */
+@font-face {
+  font-family: 'MiSans Medium';
+  src: url('fonts/MiSans-Medium.ttf') format('truetype');
+}
+
 /* ========== CSS Variables (macOS System Colors) ========== */
 :root {
   --bg: #f5f5f7;
