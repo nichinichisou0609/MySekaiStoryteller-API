@@ -60,6 +60,10 @@ export default class UILayer extends BaseLayer {
     this.watermarkSprite.visible = visible
   }
 
+  public setWatermarkText(customText: string): void {
+    this.watermarkSprite.setCustomText(customText)
+  }
+
   public async telop(text: string): Promise<void> {
     this.telopContainer.text = text
     await this.telopContainer.show(200)

@@ -33,6 +33,8 @@ const VideoSchema = z.object({
   audioBitrate: z.string().default('128k'),
   encoder: z.string().default('auto'),
   watermark: z.boolean().default(true),
+  /** 自定义水印文字：显示在自带水印下一行；空 = 不追加 */
+  watermarkText: z.string().default(''),
   exportMode: z.enum(['record', 'fast']).default('record'),
   exportBitrate: z.number().default(12_000_000),
   exportFastEncoder: z.enum(['auto', 'webcodecs', 'frames']).default('auto'),
@@ -177,6 +179,9 @@ function applyEnvOverrides(config: Omit<HostConfig, 'rootDir' | 'paths'>): void 
     config.video.watermark = !['0', 'false', 'no', 'off'].includes(
       env.MSS_VIDEO_WATERMARK.toLowerCase()
     )
+  }
+  if (env.MSS_VIDEO_WATERMARK_TEXT !== undefined) {
+    config.video.watermarkText = env.MSS_VIDEO_WATERMARK_TEXT
   }
   if (env.MSS_EXPORT_MODE) {
     const mode = env.MSS_EXPORT_MODE.toLowerCase()

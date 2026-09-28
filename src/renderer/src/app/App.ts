@@ -245,6 +245,7 @@ export class App {
             crf: number
             audioBitrate: string
             watermark?: boolean
+            watermarkText?: string
             exportMode?: 'record' | 'fast'
             exportBitrate?: number
             exportFastEncoder?: 'auto' | 'webcodecs' | 'frames'
@@ -332,6 +333,7 @@ export class App {
       crf: number
       audioBitrate: string
       watermark?: boolean
+      watermarkText?: string
       exportMode?: 'record' | 'fast'
       exportBitrate?: number
       exportFastEncoder?: 'auto' | 'webcodecs' | 'frames'
@@ -369,6 +371,7 @@ export class App {
     await this.preloadStoryAssets()
     this.initializeLayers()
     this.layerUI.setWatermarkVisible(videoConfig.watermark !== false)
+    this.layerUI.setWatermarkText(videoConfig.watermarkText ?? '')
     await new Promise<void>((resolve) => setTimeout(resolve, 100))
 
     this.videoExportManager = new VideoExportManager(this)

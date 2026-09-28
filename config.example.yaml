@@ -34,6 +34,9 @@ video:
   watermark: true     # 右上角水印（env: MSS_VIDEO_WATERMARK）
                       # 本视频由 MySekaiStoryteller-API 生成
                       # Designed by GuangChen2333 & 慵懒午睡
+  watermarkText: ""   # 自定义水印文字：右对齐显示在自带两行水印的下一行，
+                      # 支持最多 2 行（\n 换行），留空则只显示自带水印
+                      # （env: MSS_VIDEO_WATERMARK_TEXT）
   exportMode: record  # 导出管线：record | fast（env: MSS_EXPORT_MODE）
                       # record = 实时录制（MediaRecorder 墙钟录制，慢但最保守）
                       # fast   = 虚拟时钟逐帧渲染 + WebCodecs 直编 MP4，

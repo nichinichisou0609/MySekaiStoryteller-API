@@ -30,6 +30,7 @@ export interface VideoConfig {
   crf: number
   audioBitrate: string
   watermark: boolean
+  watermarkText?: string
   exportMode: 'record' | 'fast'
   exportBitrate: number
   exportFastEncoder: 'auto' | 'webcodecs' | 'frames'
@@ -362,7 +363,8 @@ export class VideoApiServer {
           codec: 'h264',
           crf: this.video.crf,
           audioBitrate: this.video.audioBitrate,
-          watermark: this.video.watermark
+          watermark: this.video.watermark,
+          watermarkText: this.video.watermarkText
         },
         ...(this.extraHealthProvider ? this.extraHealthProvider() : {})
       })
@@ -593,6 +595,7 @@ export class VideoApiServer {
       crf: this.video.crf,
       audioBitrate: this.video.audioBitrate,
       watermark: this.video.watermark,
+      watermarkText: this.video.watermarkText,
       exportMode: this.video.exportMode,
       exportBitrate: this.video.exportBitrate,
       exportFastEncoder: this.video.exportFastEncoder,
