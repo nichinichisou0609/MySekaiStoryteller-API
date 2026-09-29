@@ -30,14 +30,21 @@ export function buildLipSyncEnvelope(
   const gate = Math.max(0.008, reference * 0.055)
   const values = new Float32Array(rms.length)
   let previous = 0
+  // 先用 ~100ms 滑动平均抹掉音节级能量峰，包络只保留"说话活动度"：
+  // 配合慢时间常数（开 200ms / 语中收 260ms），连续说话时每秒至多
+  // 1~2 次可见开合；静音仍用 60ms 快收，句读和语音结束及时闭嘴。
+  const smoothWindow = Math.max(1, Math.round(100 / frameMs))
   for (let i = 0; i < rms.length; i++) {
-    // 幅度收敛到 0.55 内、慢包络（开约 70ms / 合约 120ms）：跟随语音强弱但
-    // 不逐音节拍打，观感是"在说话"而不是"机关枪"
-    const target = rms[i] <= gate ? 0 : Math.min(0.55, Math.pow((rms[i] - gate) / reference, 0.7) * 0.5)
-    // 开 70ms / 语中收 120ms / 静音闭合 60ms：语内柔、停顿及时闭嘴
-    const tau = target > previous ? 70 : target === 0 ? 60 : 120
-    const smoothing = 1 - Math.exp(-frameMs / tau)
-    previous += (target - previous) * smoothing
+    let sum = 0
+    let count = 0
+    for (let j = Math.max(0, i - smoothWindow + 1); j <= i; j++) {
+      sum += rms[j]
+      count++
+    }
+    const level = sum / count
+    const target = level <= gate ? 0 : Math.min(0.55, Math.pow((level - gate) / reference, 0.7) * 0.5)
+    const tau = target > previous ? 200 : target === 0 ? 60 : 260
+    previous += (target - previous) * (1 - Math.exp(-frameMs / tau))
     if (previous < 0.015) previous = 0
     values[i] = previous
   }
