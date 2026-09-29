@@ -9,8 +9,6 @@
   <img src="https://img.shields.io/badge/typescript-20B2AA?logoColor=ffffff&style=for-the-badge&logo=typescript" alt="TypeScript" style="margin-top: 0; margin-right: 5px;" />
   <img src="https://img.shields.io/badge/node-20B2AA?style=for-the-badge&logoColor=white&logo=nodedotjs" alt="Node.js" style="margin-top: 0; margin-right: 5px;" />
   <img src="https://img.shields.io/badge/playwright-20B2AA?style=for-the-badge&logoColor=white&logo=playwright" alt="Playwright" style="margin-top: 0; margin-right: 5px;" />
-  <img src="https://img.shields.io/badge/ffmpeg-20B2AA?style=for-the-badge&logoColor=white&logo=ffmpeg" alt="FFmpeg" style="margin-top: 0; margin-right: 5px;" />
-  <img src="https://img.shields.io/badge/license-GPL--3.0-20B2AA?style=for-the-badge" alt="GPL 3.0" style="margin-top: 0;" />
  </div>
 
  <p>
@@ -31,23 +29,24 @@
 > [!IMPORTANT]
 > 本项目基于 [Untitled-Story/MySekaiStoryteller](https://github.com/Untitled-Story/MySekaiStoryteller) **二次开发**，
 > 将其从 **Electron 桌面应用**重构为**无头纯 API 渲染框架**。
-> 如需桌面阅读器，请访问原项目。感谢原作者 [GuangChen2333](https://github.com/GuangChen2333) 与
+> 如需桌面编辑器，请访问原项目。感谢原作者 [GuangChen2333](https://github.com/GuangChen2333) 与
 > [Untitled-Story](https://github.com/Untitled-Story) 组织。
 
 ## 项目简介
 
 接收 `*.sekai-story.json` 故事剧本，用 Live2D（Project SEKAI 风格）渲染并导出为 MP4 视频，
-通过 HTTP API 对外提供服务。典型用法：部署在本机或任意一台能跑无头 Chrome 的机器上，
-配合官方 [AstrBot 插件](https://github.com/yonglanws/astrbot_plugin_msst) 实现
-QQ/Telegram 机器人的 AI 剧本生成与视频自动发送。
+通过 HTTP API 对外提供服务。渲染宿主不依赖 Electron 与桌面环境，可部署在本机、局域网服务器或
+任意能跑无头 Chrome 的机器上；配合官方 [AstrBot 插件](https://github.com/yonglanws/astrbot_plugin_msst)
+即可实现 QQ/Telegram 机器人的 AI 剧本生成与视频自动发送。
 
 | 特性     | 说明                                                                       |
 | -------- | -------------------------------------------------------------------------- |
-| 渲染引擎 | PixiJS + Live2D 跑在无头 Chrome 里（Playwright 渲染池，每页独立 WebGL 上下文） |
-| 导出管线 | `record`（默认，MediaRecorder 墙钟录制）或 `fast`（虚拟时钟逐帧渲染 + WebCodecs 直编） |
-| 视频编码 | ffmpeg 自动探测 NVENC / AMF / QSV 硬件编码，失败自动回退 CPU；fast 模式页内直编后仅 remux |
+| 渲染引擎 | PixiJS + Live2D 跑在无头 Chrome/Edge 里（Playwright 渲染池，每页独立 WebGL 上下文） |
+| 表演系统 | 角色滑入/滑出登场退场、台词内时序动作与表情、听者反应、按语音音量包络驱动的口型 |
+| 导出管线 | `record`（默认，MediaRecorder 墙钟录制）或 `fast`（虚拟时钟逐帧渲染）          |
+| 视频编码 | ffmpeg 自动探测 NVENC / AMF / QSV 硬件编码，失败自动回退 CPU                 |
 | 音频     | 内置 BGM + GPT-SoVITS 语音合成（无 TTS 时自动跳过配音，导出不受影响）        |
-| 队列管理 | 任务排队、默认 2 路并发导出、IP 限流、过期文件自动清理                       |
+| 队列管理 | 任务排队、可配置并发导出、IP 限流、过期文件自动清理                          |
 | 统一配置 | 单个 `config.yaml`，全字段中文注释，`MSS_*` 环境变量可覆盖                   |
 
 ## 快速开始
@@ -117,7 +116,9 @@ resources/
 | `/api/v1/export/:taskId/cancel`  | POST | 取消任务             |
 | `/api/v1/download/:filename`     | GET  | 下载导出的视频       |
 | `/api/v1/files`                  | GET  | 分页列出导出文件     |
+| `/api/v1/resources`              | GET  | 资源目录（模型/动作/表情/背景清单，供 AI 侧构建提示词与校验白名单） |
 | `/api/v1/cleanup`                | POST | 触发过期文件清理     |
+| `/api/v1/cleanup/stats`          | GET  | 清理统计             |
 | `/api/v1/health`                 | GET  | 健康检查（含渲染池/GPU 状态） |
 | `/api/v1/status`                 | GET  | 队列状态             |
 
@@ -133,37 +134,60 @@ curl -X POST http://127.0.0.1:9881/api/v1/export \
 
 ## 故事文件格式
 
-故事通过 `*.sekai-story.json` 文件定义，包含 `models`、`images` 和 `snippets` 三个字段：
+故事通过 `*.sekai-story.json` 文件定义，包含 `models`、`images` 和 `snippets` 三个字段。
+下面是一场完整短戏的骨架（字段与当前版本一致）：
 
 ```json
 {
   "models": [
-    {"id": 1, "model": "20mizuki/20mizuki_normal/20mizuki_normal.model3.json"}
+    {"id": 1, "model": "20mizuki/20mizuki_normal/20mizuki_normal.model3.json",
+     "normal_scale": 2.1, "small_scale": 1.8, "anchor": 0.5}
   ],
   "images": [
-    {"id": 1, "image": "bg_e000401.jpg"}
+    {"id": 1, "image": "bg_c000101.jpg"}
   ],
   "snippets": [
-    {"type": "ChangeLayoutMode", "wait": false, "delay": 0, "data": {"mode": 0}},
+    {"type": "ChangeLayoutMode", "wait": false, "delay": 0, "data": {"mode": "Normal"}},
     {"type": "BlackOut", "wait": true, "delay": 0, "data": {"duration": 500}},
-    {"type": "ChangeBackgroundImage", "wait": true, "delay": 0, "data": {"image": {"id": 1}}},
+    {"type": "ChangeBackgroundImage", "wait": true, "delay": 0, "data": {"imageId": 1}},
     {"type": "BlackIn", "wait": true, "delay": 0, "data": {"duration": 800}},
-    {"type": "LayoutAppear", "wait": true, "delay": 0, "data": {"modelId": 1, "from": {"side": "Right"}}},
-    {"type": "Talk", "wait": true, "delay": 0, "data": {"speaker": "晓山瑞希", "content": "你好！"}}
+    {"type": "LayoutAppear", "wait": true, "delay": 0,
+     "data": {"modelId": 1, "from": {"side": "Left", "offset": -100}, "to": {"side": "Left", "offset": 0},
+              "motion": "w-normal-greeting01", "facial": "face_smile_01", "facialFirst": true,
+              "moveSpeed": "Normal"}},
+    {"type": "Talk", "wait": false, "delay": 0,
+     "data": {"speaker": "晓山瑞希", "content": "你好！", "ttsText": "こんにちは！",
+              "modelId": 1, "voice": ""}},
+    {"type": "HideTalk", "wait": true, "delay": 0.2},
+    {"type": "LayoutClear", "wait": true, "delay": 0.1,
+     "data": {"modelId": 1, "from": {"side": "Left", "offset": 0}, "to": {"side": "Left", "offset": -100},
+              "motion": "w-normal-nod01", "moveSpeed": "Normal"}},
+    {"type": "BlackOut", "wait": true, "delay": 0, "data": {"duration": 600}}
   ]
 }
 ```
 
-- 故事内的 `model` / `image` 路径相对于**资源根** `resources/`（即 `resources/models/...`、
-  `resources/images/...`），宿主通过 `/resources/*` 提供访问
-- 指令片段（`snippets`）的完整类型定义见 `src/common/types/Story.ts`，
-  也可参考随资源包提供的示例剧本
+- 故事内的 `model` / `image` 路径相对于**资源根** `resources/`，宿主通过 `/resources/*` 提供访问
+- 指令片段（`snippets`）的完整类型定义见 `src/common/types/Story.ts`；
+  `resources/stories/` 下附带的示例剧本可直接参考或改造
+
+### 登场与退场（滑入滑出 + 入场退场动作）
+
+`LayoutAppear` / `LayoutClear` 各自承载两种舞台动画：
+
+- `from` 与 `to` **不同**时做滑动：角色从 `from` 位置滑到 `to` 位置，`moveSpeed` 控制时长
+  （Slow 700ms / Normal 500ms / Fast 300ms / Immediate 瞬移），滑入滑出全程同步播放入场/退场动作
+  （`motion` + `facial`），入场动作播完前剧情不会继续
+- `from` 与 `to` **相同**时原地淡入/淡出，适合黑暗中现身等特殊演出
+- `offset` 是相对槽位的水平像素偏移（正值向右）：给同侧槽位写 `-100` / `+100`，
+  角色就会从槽位旁侧短距离滑入/滑出，配合入场/退场动作构成完整的登场/退场表演
 
 ### 台词中的连续动作与听者反应
 
 `Talk.data.actions` 在本条台词内调度动作和表情，`at` 为实际台词时长的比例（0 到 1），
 而不是秒数。`modelId` 可以是说话者，也可以是当前在场的听话者；不在场角色的事件不会让角色重新出现。
-动作和表情独立更新，省略的通道保持原状态。同一角色可以按时间连续切换；最多 24 个事件。
+动作和表情独立更新，省略的通道保持原状态。同一角色可以按时间连续切换；渲染层最多 24 个事件
+（AstrBot 插件生成的剧本会更克制，且插件侧有自己的数量与间隔校验）。
 
 ```json
 {
@@ -184,7 +208,7 @@ curl -X POST http://127.0.0.1:9881/api/v1/export \
 独立 `Motion.data.actions` 可用于无声连续表演，`data.duration` 为秒数（默认 2，最大 120）。
 
 口型优先从当前台词音频提取音量包络，静音和语音结束后闭嘴；无音频时按文字和标点产生确定性节奏。
-两人同屏与淡入淡出换角属于 AstrBot 插件生成规则，渲染 API 不强制这些限制。
+两人同屏、滑入滑出换角等舞台规则属于 AstrBot 插件生成规则，渲染 API 不强制这些限制。
 
 ## 资源导入指南
 
@@ -227,30 +251,22 @@ curl -X POST http://127.0.0.1:9881/api/v1/export \
 
 `config.yaml` 的 `video.exportMode`（环境变量 `MSS_EXPORT_MODE`）在两条管线间切换，默认 `record`。
 
-| 模式     | 怎么出片 | 耗时怎么涨 | 输出分辨率 | 适用 |
-| -------- | -------- | ---------- | ---------- | ---- |
-| `record` | 无头页用 MediaRecorder 墙钟录制画布，ffmpeg 二次转码合流 | 至少等于视频时长 + 转码 | 按 `video.width` / `video.height` 输出；录制尺寸与输出一致（`renderScale: 1`）时跳过缩放滤镜 | 短片、核显、要最保守的路径 |
-| `fast`   | 虚拟时钟按时间轴逐帧推进动画，页内 WebCodecs 直编 H.264，ffmpeg 只做 `-c:v copy` remux | 跟「帧数 x 每帧 GPU 读回」成正比，不再跟视频时长 1:1 | 按 `video.width` / `video.height` 直出 | 长片、独显；WebCodecs 不可用时自动回退 `record` |
+| 模式     | 怎么出片 | 耗时怎么涨 
+| -------- | -------- | ---------- |
+| `record` | 无头页用 MediaRecorder 墙钟录制画布，ffmpeg 合流（可选流拷贝或二次转码） | 至少等于视频时长 + 合流 |
+| `fast`   | 虚拟时钟按时间轴逐帧推进动画，页内 WebCodecs 直编或帧序列交 ffmpeg 硬编 | 跟「帧数 x 每帧 GPU 读回」成正比，不再跟视频时长 1:1 |`record` |
 
-`fast` 的时间轴、TTS 落点和 `record` 同一套：台词时长仍按 TTS 波形 + 尾垫，音频离线混进 WAV 后再 mux。编码帧率封顶 30fps（时间轴仍按 `video.fps` 走，片子时长不变），用来砍掉 WebGL 画布读回次数。
+`record` 的合流路径由 `video.recordStreamCopy` 决定：
 
-切换方式：
+- `off`（默认）：浏览器录 webm，宿主全量重编码合流
+- `auto` / `on`：浏览器支持直录 h264/mp4 时按目标码率录制、宿主 `-c:v copy` 流拷贝合流，
+  省掉二次编码；配合 `recordTargetSizeMb`（按估算时长反推码率控制成片体积）、
+  `recordBitrateOvershoot`、`recordKeyframeIntervalSec`、`recordCaptureFps`（0 跟随 `video.fps`）微调
+- 浏览器不支持 mp4 直录时自动回到重编码路径，导出不受影响
 
-```yaml
-video:
-  exportMode: fast          # record | fast（env: MSS_EXPORT_MODE）
-  exportBitrate: 12000000   # fast 模式视频码率 bps（env: MSS_EXPORT_BITRATE）
-```
-
-改完重启宿主。不配这两项时行为与原来完全一致。
-
-**什么时候 fast 会更快**
-
-- 3 分钟级剧本：`record` 至少要等满墙钟；`fast` 只付「画一帧 + 读回一帧」的成本
-- 独显（如 NVIDIA）：读回比核显便宜，导出时间会接近 TTS + GPU 绘制，而不是视频时长
-- 短片 + 核显 + `renderScale: 1.5`：读回税可能比「等墙钟」还贵，这时继续用 `record`
-
-WebCodecs 探测失败或 fast 整条失败时，会自动回退 `record`，导出仍会成功。
+`fast` 的时间轴、TTS 落点和 `record` 同一套：台词时长仍按 TTS 波形 + 尾垫，音频离线混进 WAV 后再 mux。
+`video.exportFastEncoder`（`auto` / `webcodecs` / `frames`）决定页内直编还是「JPEG 帧序列 + ffmpeg 硬编」，
+`video.exportBitrate` 控制 fast 模式码率。WebCodecs 探测失败或 fast 整条失败时，会自动回退 `record`。
 
 ## 部署
 
@@ -325,9 +341,10 @@ WebGL 落到了软件渲染，导出会慢 5–10 倍，并可能音画不同步
 - 尝试降低 `render.workers`（显存/内存不足时）
 - 确认 `video.encoder` 对应的硬件在当前机器可用（失败会自动回退 CPU）。
   取值是 `auto` / `nvidia` / `amd` / `intel` / `libx264`，不是 ffmpeg 的 `nvenc` 字符串
+- `record` 流拷贝在浏览器不支持 mp4 直录或合并失败时，会自动回到重编码路径
 - `exportMode: fast` 失败时会自动回退 `record`；日志里会出现 `Fast export failed ... falling back to record mode`
 
-**Q: 开了 fast，短片反而更慢**
+**Q: 开了 fast 反而更慢**
 
 fast 每一帧都要把 WebGL 画布读回给编码器，核显上这一步可能比「等墙钟录完」还贵。短片继续用 `record`；长片或独显再开 `fast`。也可把 `renderScale` 从 `1.5` 降到 `1.0` 减轻读回。
 
