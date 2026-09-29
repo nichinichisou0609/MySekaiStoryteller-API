@@ -229,7 +229,8 @@ export function createBridgeRouter(deps: BridgeDeps): Router {
               payload.audioBitrate,
               config.video.encoder as VideoEncoderChoice,
               cappedVideoBps,
-              cap!.durationSec
+              cap!.durationSec,
+              cap!.maxBytes
             )
           } else if (hasAudio) {
             await apiMuxVideoAudioCopy(

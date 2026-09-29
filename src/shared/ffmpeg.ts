@@ -665,13 +665,24 @@ export function parseBitrateToBps(value: string, fallback = 128_000): number {
   return Math.round(unit === 'm' ? n * 1_000_000 : unit === 'k' ? n * 1000 : n)
 }
 
-/** 按目标码率编码的视频参数（VBR + 峰值约束）；不支持的硬件编码器按 libx264 处理 */
+/**
+ * 按目标码率编码的视频参数（VBR + 峰值约束）；不支持的硬件编码器按 libx264 处理。
+ * peakRatio 为 maxrate 相对 -b:v 的倍数：1 时 VBV 保证长期均值不超过目标码率。
+ */
 function targetBitrateVideoArgs(
   gpu: 'nvidia' | 'amd' | 'intel' | 'cpu',
-  videoBps: number
+  videoBps: number,
+  peakRatio: number
 ): string[] {
   const kbps = Math.max(1, Math.round(videoBps / 1000))
-  const rate = ['-b:v', `${kbps}k`, '-maxrate', `${kbps * 2}k`, '-bufsize', `${kbps * 4}k`]
+  const rate = [
+    '-b:v',
+    `${kbps}k`,
+    '-maxrate',
+    `${Math.round(kbps * peakRatio)}k`,
+    '-bufsize',
+    `${kbps * 2}k`
+  ]
   if (gpu === 'nvidia') {
     return [
       '-c:v',
@@ -684,6 +695,8 @@ function targetBitrateVideoArgs(
       'high',
       '-rc',
       'vbr',
+      '-multipass',
+      'qres',
       ...rate,
       '-bf',
       '3',
@@ -717,6 +730,10 @@ function targetBitrateVideoArgs(
  * record 流拷贝路径的体积保险：录制产物超出目标体积时，按精确码率重编码视频并合流。
  * 保持录制分辨率与原始时间戳（不缩放、不补帧），与流拷贝产物同形；
  * 硬件编码失败回退 libx264。
+ *
+ * 编码器的 VBR 均值对 -b:v 并不精确（NVENC 实测 maxrate 2 倍时超出 8%、
+ * 1.2 倍时低 9%）：先按 1.2 倍峰值编一遍，成片仍超 maxOutputBytes 时按超出
+ * 比例降码率、峰值压到目标码率再编一遍（VBV 约束长期均值不超目标）。
  */
 export async function apiEncodeVideoAudioToBitrate(
   videoPath: string,
@@ -725,9 +742,10 @@ export async function apiEncodeVideoAudioToBitrate(
   audioBitrate: string,
   encoder: VideoEncoderChoice,
   videoBps: number,
-  durationSec: number
+  durationSec: number,
+  maxOutputBytes = 0
 ): Promise<void> {
-  const gpu =
+  let gpu: 'nvidia' | 'amd' | 'intel' | 'cpu' =
     encoder === 'libx264' || encoder === 'cpu'
       ? 'cpu'
       : encoder === 'auto'
@@ -736,11 +754,11 @@ export async function apiEncodeVideoAudioToBitrate(
           ? encoder
           : 'cpu'
 
-  const build = (g: 'nvidia' | 'amd' | 'intel' | 'cpu'): string[] => [
+  const build = (g: 'nvidia' | 'amd' | 'intel' | 'cpu', bps: number, peak: number): string[] => [
     '-i',
     videoPath,
     ...(audioPath ? ['-i', audioPath, '-map', '0:v:0', '-map', '1:a:0'] : ['-map', '0:v:0']),
-    ...targetBitrateVideoArgs(g, videoBps),
+    ...targetBitrateVideoArgs(g, bps, peak),
     '-fps_mode',
     'passthrough',
     ...(audioPath ? ['-c:a', 'aac', '-b:a', audioBitrate, '-shortest'] : []),
@@ -750,16 +768,27 @@ export async function apiEncodeVideoAudioToBitrate(
     outputPath
   ]
 
-  logger.info(
-    `[API] Size-capped re-encode: encoder=${gpu}, videoBitrate=${(videoBps / 1_000_000).toFixed(2)}Mbps, ` +
-      `duration=${durationSec.toFixed(1)}s`
-  )
-  try {
-    await runFfmpegWithProgress(build(gpu), Math.max(durationSec, 10))
-  } catch (error) {
-    if (gpu === 'cpu') throw error
-    logger.warn(`Size-capped re-encode failed with ${gpu}, falling back to libx264:`, error)
-    await runFfmpegWithProgress(build('cpu'), Math.max(durationSec, 10))
+  const encodeOnce = async (bps: number, peak: number): Promise<void> => {
+    logger.info(
+      `[API] Size-capped re-encode: encoder=${gpu}, videoBitrate=${(bps / 1_000_000).toFixed(2)}Mbps, ` +
+        `peak=${peak}x, duration=${durationSec.toFixed(1)}s`
+    )
+    try {
+      await runFfmpegWithProgress(build(gpu, bps, peak), Math.max(durationSec, 10))
+    } catch (error) {
+      if (gpu === 'cpu') throw error
+      logger.warn(`Size-capped re-encode failed with ${gpu}, falling back to libx264:`, error)
+      gpu = 'cpu'
+      await runFfmpegWithProgress(build(gpu, bps, peak), Math.max(durationSec, 10))
+    }
+  }
+
+  await encodeOnce(videoBps, 1.2)
+  if (maxOutputBytes > 0) {
+    const size = (await fs.promises.stat(outputPath)).size
+    if (size > maxOutputBytes) {
+      await encodeOnce(Math.floor((videoBps * maxOutputBytes * 0.95) / size), 1)
+    }
   }
 }
 
