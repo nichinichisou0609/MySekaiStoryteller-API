@@ -27,6 +27,7 @@ import { estimateSnippetDuration } from '../utils/TimelineCalculator'
 import { webGLValidator } from '../utils/WebGLContextValidator'
 import { frameValidator } from '../utils/FrameContentValidator'
 import { resolveBgmUrl } from '../utils/ResourceUrl'
+import { buildLipSyncEnvelope } from '../utils/LipSyncEnvelope'
 
 export { VideoExportOptions }
 export interface ExportProgress {
@@ -72,10 +73,33 @@ export default class VideoExportManager {
     this.progressTracker = new ProgressTracker()
   }
 
+  public get signal(): AbortSignal | undefined {
+    return this.abortController?.signal
+  }
+
   public abort(): void {
     this.isAborted = true
     this.abortController?.abort()
+    this.app.currentTalkLipSync = null
     this.logger.info('Export aborted by user')
+  }
+
+  private async prepareTalkLipSync(audioBuffer?: ArrayBuffer): Promise<void> {
+    this.app.currentTalkLipSync = null
+    if (!audioBuffer) return
+    try {
+      // Offline decoding must not wait on timers while the fast frame pump is paused.
+      const decoder = new OfflineAudioContext(1, 1, 48000)
+      const decoded = await decoder.decodeAudioData(audioBuffer.slice(0))
+      this.checkAborted()
+      const channels = Array.from({ length: decoded.numberOfChannels }, (_, index) =>
+        decoded.getChannelData(index)
+      )
+      this.app.currentTalkLipSync = buildLipSyncEnvelope(channels, decoded.sampleRate)
+    } catch (error) {
+      this.checkAborted()
+      this.logger.warn('Speech envelope unavailable; using text rhythm for lip sync', error)
+    }
   }
 
   private resetState(): void {
@@ -620,12 +644,15 @@ export default class VideoExportManager {
           timelineEntry?.durationMs ??
           Math.max(Math.round(snippet.delay * 1000), estimateSnippetDuration(snippet))
 
+        await this.prepareTalkLipSync(ttsAudioResults.get(i)?.audioBuffer)
+        this.app.currentTalkStartedAtMs = 0
         timestampRecorder.markSnippetStart(i, snippet.type, {
           speaker: talkData?.speaker,
           content: talkData?.content
         })
 
         // 渲染片段 - 片段间的延迟由 snippet.delay 控制，不由帧率控制器控制
+        const snippetStartedAtMs = performance.now()
         await this.app.snippetStrategyManager.handleSnippetForExport(snippet)
 
         if (i < 5 || (i + 1) % 30 === 0) {
@@ -654,7 +681,8 @@ export default class VideoExportManager {
         }
 
         const ttsDur = ttsAudioResults.get(i)?.durationMs
-        timestampRecorder.markSnippetEnd(ttsDur)
+        timestampRecorder.markSnippetEnd(ttsDur,
+          this.app.currentTalkStartedAtMs > 0 ? this.app.currentTalkStartedAtMs - snippetStartedAtMs : 0)
 
         if (i % 50 === 0) {
           this.logger.info(
@@ -1211,15 +1239,21 @@ export default class VideoExportManager {
           timelineEntry?.durationMs ??
           Math.max(Math.round(snippet.delay * 1000), estimateSnippetDuration(snippet))
 
+        pumpPaused = true
+        await this.prepareTalkLipSync(ttsAudioResults.get(i)?.audioBuffer)
+        pumpPaused = false
+        this.app.currentTalkStartedAtMs = 0
         timestampRecorder.markSnippetStart(i, snippet.type, {
           speaker: talkData?.speaker,
           content: talkData?.content
         })
 
+        const snippetStartedAtMs = performance.now()
         await this.app.snippetStrategyManager.handleSnippetForExport(snippet)
 
         const ttsDur = ttsAudioResults.get(i)?.durationMs
-        timestampRecorder.markSnippetEnd(ttsDur)
+        timestampRecorder.markSnippetEnd(ttsDur,
+          this.app.currentTalkStartedAtMs > 0 ? this.app.currentTalkStartedAtMs - snippetStartedAtMs : 0)
       }
 
       // 尾部追帧：让帧泵渲染到「最后一个片段的虚拟结束时间」，
@@ -1681,6 +1715,7 @@ export default class VideoExportManager {
           ? (snippet as { data?: { speaker?: string; content?: string } }).data
           : undefined
 
+        this.app.currentTalkStartedAtMs = 0
         timestampRecorder.markSnippetStart(i, snippet.type, {
           speaker: talkData?.speaker,
           content: talkData?.content

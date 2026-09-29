@@ -42,6 +42,21 @@ const SideEnum = z.enum(Sides)
 const MoveSpeedEnum = z.enum(MoveSpeed)
 const CurvesEnum = z.enum(Curves)
 
+/** Timed character cues. `at` is a fraction of the containing snippet's duration. */
+export const CharacterActionSchema = z
+  .object({
+    at: z.number().finite().min(0).max(1),
+    modelId: z.number().finite().int(),
+    motion: z.string().trim().min(1).optional(),
+    facial: z.string().trim().min(1).optional()
+  })
+  .refine((action) => Boolean(action.motion || action.facial), {
+    message: 'A character action must specify motion or facial'
+  })
+
+const CharacterActionsSchema = z.array(CharacterActionSchema).max(24).optional()
+export type CharacterAction = z.infer<typeof CharacterActionSchema>
+
 const SnippetSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('ChangeLayoutMode'),
@@ -114,7 +129,8 @@ const SnippetSchema = z.discriminatedUnion('type', [
       /** 说话时的并发身体动作（与台词同时开始，短于台词则自然淡出回基础姿态） */
       motion: z.string().default(''),
       /** 说话时的并发表情切换（可选，缺省保持当前表情） */
-      facial: z.string().default('')
+      facial: z.string().default(''),
+      actions: CharacterActionsSchema
     })
   }),
   z.object({
@@ -145,9 +161,12 @@ const SnippetSchema = z.discriminatedUnion('type', [
     delay: z.number(),
     data: z.object({
       modelId: z.number(),
-      motion: z.string(),
-      facial: z.string(),
-      facialFirst: z.boolean().default(true)
+      motion: z.string().default(''),
+      facial: z.string().default(''),
+      facialFirst: z.boolean().default(true),
+      /** Silent sequence duration in seconds; only used when actions are present. */
+      duration: z.number().finite().positive().max(120).optional(),
+      actions: CharacterActionsSchema
     })
   }),
   z.object({

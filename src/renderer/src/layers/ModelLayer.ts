@@ -27,4 +27,15 @@ export default class ModelLayer extends BaseLayer {
   public removeModel(model: AdvancedModel): void {
     this.layerContainer.removeChild(model)
   }
+
+  /** Read-only membership/opacity query for timed character cues. */
+  public isModelVisible(modelId: number): boolean {
+    const model = this.layerContainer.children.find((child) => {
+      const candidate = child as AdvancedModel
+      return candidate.metadata?.id === modelId
+    }) as AdvancedModel | undefined
+    if (!model || !model.visible) return false
+    const alpha = (model.filters?.[0] as { alpha?: number } | undefined)?.alpha
+    return alpha === undefined || alpha > 0.01
+  }
 }

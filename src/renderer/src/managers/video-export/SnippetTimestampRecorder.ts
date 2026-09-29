@@ -10,6 +10,7 @@ export interface SnippetTimestamp {
   speaker?: string
   content?: string
   ttsDurationMs?: number
+  speechOffsetMs?: number
 }
 
 export class SnippetTimestampRecorder {
@@ -42,7 +43,7 @@ export class SnippetTimestampRecorder {
     )
   }
 
-  markSnippetEnd(ttsDurationMs?: number): void {
+  markSnippetEnd(ttsDurationMs?: number, speechOffsetMs = 0): void {
     if (this.currentSnippetIndex < 0) return
 
     const wallEndMs = performance.now()
@@ -57,7 +58,8 @@ export class SnippetTimestampRecorder {
       isTalk,
       speaker: this.currentSnippetData.speaker,
       content: this.currentSnippetData.content,
-      ttsDurationMs: ttsDurationMs
+      ttsDurationMs,
+      speechOffsetMs: Math.max(0, speechOffsetMs)
     }
 
     this.timestamps.push(entry)
@@ -176,7 +178,7 @@ export class SnippetTimestampRecorder {
         continue
       }
 
-      const videoRelativeStart = this.getVideoRelativeStartTimeMs(snippetIndex)
+      const videoRelativeStart = this.getVideoRelativeStartTimeMs(snippetIndex) + (ts.speechOffsetMs ?? 0)
       const ttsDurationMs = ttsResult.durationMs
       const snippetDurationMs = ts.wallDurationMs
 

@@ -159,6 +159,33 @@ curl -X POST http://127.0.0.1:9881/api/v1/export \
 - 指令片段（`snippets`）的完整类型定义见 `src/common/types/Story.ts`，
   也可参考随资源包提供的示例剧本
 
+### 台词中的连续动作与听者反应
+
+`Talk.data.actions` 在本条台词内调度动作和表情，`at` 为实际台词时长的比例（0 到 1），
+而不是秒数。`modelId` 可以是说话者，也可以是当前在场的听话者；不在场角色的事件不会让角色重新出现。
+动作和表情独立更新，省略的通道保持原状态。同一角色可以按时间连续切换；最多 24 个事件。
+
+```json
+{
+  "type": "Talk", "wait": true, "delay": 0,
+  "data": {
+    "speaker": "晓山瑞希", "modelId": 1, "content": "先别着急，听我慢慢说。",
+    "actions": [
+      {"at": 0, "modelId": 1, "motion": "w-normal-default01", "facial": "face_smile_01"},
+      {"at": 0.4, "modelId": 2, "facial": "face_smile_01"},
+      {"at": 0.7, "modelId": 1, "facial": "face_smile_01"}
+    ]
+  }
+}
+```
+
+动作名和表情名必须以该角色的资源目录为准。旧的 `Talk.data.motion` / `facial` 仍在台词开始时生效；
+新的事件只覆盖指定通道。不要用 `Talk(wait:false)` 后接 `Motion` 来模拟导出时的并行动作。
+独立 `Motion.data.actions` 可用于无声连续表演，`data.duration` 为秒数（默认 2，最大 120）。
+
+口型优先从当前台词音频提取音量包络，静音和语音结束后闭嘴；无音频时按文字和标点产生确定性节奏。
+两人同屏与淡入淡出换角属于 AstrBot 插件生成规则，渲染 API 不强制这些限制。
+
 ## 资源导入指南
 
 ### 新增 Live2D 角色（模型）

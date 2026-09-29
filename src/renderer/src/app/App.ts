@@ -19,6 +19,7 @@ import VideoExportManager, {
 } from '../managers/VideoExportManager'
 import AnimationManager from '../managers/AnimationManager'
 import { TTSManager } from '../managers/TTSManager'
+import type { LipSyncEnvelope } from '../utils/LipSyncEnvelope'
 
 /** 宿主统一下发的 TTS 配置（config.yaml 的 tts 节） */
 export interface ApiExportTtsConfig {
@@ -72,6 +73,8 @@ export class App {
 
   public exporting: boolean = false
   public lastSnippetActualDurationMs: number = 0
+  public currentTalkLipSync: LipSyncEnvelope | null = null
+  public currentTalkStartedAtMs: number = 0
   private apiExportInProgress: boolean = false
   /**
    * 宿主取消闩锁：abort 可能在资产预热阶段到达（此时新的 VideoExportManager
@@ -445,6 +448,8 @@ export class App {
       AnimationManager.exportSpeedMultiplier = 1
       this.exporting = false
       this.lastSnippetActualDurationMs = 0
+      this.currentTalkLipSync = null
+      this.currentTalkStartedAtMs = 0
       this.ttsManager?.clearAudioTracks()
       Ticker.shared.stop()
       this.logger.info('Ticker stopped after API export completed to reduce GPU idle usage')

@@ -7,7 +7,7 @@ import {
 import AnimationManager from '../managers/AnimationManager'
 import PositionRel from '../types/PositionRel'
 import { getRandomNumber } from '../utils/HelperUtils'
-import { ModelData } from '../../../common/types/Story'
+import { CharacterAction, ModelData } from '../../../common/types/Story'
 import { VisualEffectManager } from '../managers/VisualEffectManager'
 import { AlphaFilter } from 'pixi.js'
 import { ILogObj, Logger } from 'tslog'
@@ -18,6 +18,16 @@ export default class AdvancedModel extends Live2DModel {
   public lastChangeBlinkTime: number | null = null
   public readonly visualEffectManager: VisualEffectManager = new VisualEffectManager(this)
   private blinkTimerId: ReturnType<typeof setTimeout> | null = null
+  private blinkGeneration = 0
+  private readonly channelGeneration = [0, 0]
+  private bodyIgnoredParamIds: string[] = []
+  private restoreBodyUpdate: (() => void) | null = null
+  private readonly actionController = new AbortController()
+
+  /** Aborted when this model is destroyed; suitable for a snippet action scope. */
+  public get actionSignal(): AbortSignal {
+    return this.actionController.signal
+  }
 
   private _metadata: ModelData | null = null
 
@@ -37,6 +47,7 @@ export default class AdvancedModel extends Live2DModel {
     }
     this.visible = true
     this.internalModel.extendParallelMotionManager(2)
+    this.installBodyParameterIsolation()
 
     this.internalModel.parallelMotionManager[0].stopAllMotions()
     this.internalModel.parallelMotionManager[1].stopAllMotions()
@@ -74,28 +85,134 @@ export default class AdvancedModel extends Live2DModel {
     this.logger = getSubLogger(`AdvancedModel(${this._metadata.id})`)
   }
 
+  /**
+   * The dependency implements ignoreParamIds by deleting cached motion curves.
+   * Preserve parameters around body updates instead, leaving every clip reusable.
+   */
+  private installBodyParameterIsolation(): void {
+    const manager = this.internalModel.parallelMotionManager[0]
+    const originalUpdate = manager.update
+    manager.update = (core, now): boolean => {
+      const internal = this.internalModel
+      const values = this.bodyIgnoredParamIds.map((id) => ({
+        id,
+        value:
+          internal instanceof Cubism4InternalModel
+            ? internal.coreModel.getParameterValueById(id)
+            : internal instanceof Cubism2InternalModel
+              ? internal.coreModel.getParamFloat(id)
+              : 0
+      }))
+      try {
+        return originalUpdate.call(manager, core, now)
+      } finally {
+        for (const { id, value } of values) {
+          if (internal instanceof Cubism4InternalModel) {
+            internal.coreModel.setParameterValueById(id, value)
+          } else if (internal instanceof Cubism2InternalModel) {
+            internal.coreModel.setParamFloat(id, value)
+          }
+        }
+      }
+    }
+    this.restoreBodyUpdate = () => {
+      manager.update = originalUpdate
+    }
+  }
+
+  private eyeParameterIds(): string[] {
+    return this.internalModel instanceof Cubism2InternalModel
+      ? ['PARAM_EYE_R_OPEN', 'PARAM_EYE_L_OPEN', 'PARAM_EYE_BALL_X', 'PARAM_EYE_BALL_Y']
+      : ['ParamEyeROpen', 'ParamEyeLOpen', 'ParamEyeBallX', 'ParamEyeBallY']
+  }
+
+  private async startCharacterChannel(
+    channel: 0 | 1,
+    name: string,
+    ignoredParamIds: string[] = [],
+    signal?: AbortSignal,
+    canApply?: () => boolean
+  ): Promise<void> {
+    const generation = ++this.channelGeneration[channel]
+    const internal = this.internalModel
+    if (!internal || this.destroyed || signal?.aborted || this.actionSignal.aborted) return
+    const manager = internal.parallelMotionManager[channel]
+    // Invalidate older asynchronous reservations without stopping the currently playing clip.
+    manager.state.setReserved(undefined, undefined, 0)
+    const motion = await internal.motionManager.loadMotion(name, 0)
+    if (
+      !motion ||
+      this.destroyed ||
+      this.actionSignal.aborted ||
+      signal?.aborted ||
+      generation !== this.channelGeneration[channel] ||
+      (canApply && !canApply())
+    ) {
+      return
+    }
+    if (channel === 0) this.bodyIgnoredParamIds = ignoredParamIds
+    // Restarting the same named clip is intentional for consecutive cues. Only reset
+    // this channel: a body cue must never clear a listener's facial expression.
+    manager.stopAllMotions()
+    const invalidateReservation = (): void => {
+      if (generation === this.channelGeneration[channel] && !this.destroyed) {
+        manager.state.setReserved(undefined, undefined, 0)
+      }
+    }
+    signal?.addEventListener('abort', invalidateReservation, { once: true })
+    try {
+      await manager.startMotion(name, 0, MotionPriority.FORCE)
+    } finally {
+      signal?.removeEventListener('abort', invalidateReservation)
+    }
+  }
+
   public async applyMotion(
     motion: string,
     ignoreParams: boolean = false,
     extraIgnoreParamIds: string[] = []
   ): Promise<void> {
-    const manager = this.internalModel.parallelMotionManager[0]
-    if (ignoreParams || extraIgnoreParamIds.length > 0) {
-      const ignoreParamIds = [
-        ...(ignoreParams
-          ? ['ParamEyeROpen', 'ParamEyeLOpen', 'ParamEyeballX', 'ParamEyeballY']
-          : []),
-        ...extraIgnoreParamIds
-      ]
-      await manager.startMotion(motion, 0, MotionPriority.FORCE, ignoreParamIds)
-    } else {
-      await manager.startMotion(motion, 0, MotionPriority.FORCE)
-    }
+    await this.startCharacterChannel(0, motion, [
+      ...(ignoreParams ? this.eyeParameterIds() : []),
+      ...extraIgnoreParamIds
+    ])
   }
 
   public async applyFacial(facial: string): Promise<void> {
-    const manager = this.internalModel.parallelMotionManager[1]
-    await manager.startMotion(facial, 0, MotionPriority.FORCE)
+    await this.startCharacterChannel(1, facial)
+  }
+
+  /** Start independent channels, preserving any omitted channel. Never changes visibility. */
+  public async applyCharacterAction(
+    action: Pick<CharacterAction, 'motion' | 'facial'>,
+    signal?: AbortSignal,
+    canApply?: () => boolean
+  ): Promise<void> {
+    const tasks: Promise<void>[] = []
+    if (action.motion) {
+      tasks.push(
+        this.startCharacterChannel(
+          0,
+          action.motion,
+          [
+            ...this.eyeParameterIds(),
+            this.internalModel instanceof Cubism2InternalModel ? 'PARAM_MOUTH_OPEN_Y' : 'ParamMouthOpenY'
+          ],
+          signal,
+          canApply
+        )
+      )
+    }
+    if (action.facial) tasks.push(this.startCharacterChannel(1, action.facial, [], signal, canApply))
+    await Promise.all(tasks)
+  }
+
+  /** Cancel only queued loads/reservations, retaining the current visible pose. */
+  public cancelPendingActions(): void {
+    for (const channel of [0, 1] as const) {
+      this.channelGeneration[channel]++
+      this.internalModel?.parallelMotionManager[channel]?.state.setReserved(undefined, undefined, 0)
+    }
   }
 
   public async show(time: number, hologram: boolean): Promise<void> {
@@ -113,8 +230,9 @@ export default class AdvancedModel extends Live2DModel {
     }, time)
 
     this.lastChangeBlinkTime = Date.now()
+    const generation = ++this.blinkGeneration
     if (this.blinkTimerId !== null) clearTimeout(this.blinkTimerId)
-    this.blinkTimerId = setTimeout(() => this.updateAutoBlink(), getRandomNumber(4000, 6500))
+    this.blinkTimerId = setTimeout(() => this.updateAutoBlink(generation), getRandomNumber(4000, 6500))
   }
 
   public async hide(time: number): Promise<void> {
@@ -130,6 +248,8 @@ export default class AdvancedModel extends Live2DModel {
 
     this.lastChangeBlinkTime = Date.now()
     this.autoBlink = false
+    this.blinkGeneration++
+    this.cancelPendingActions()
     if (this.blinkTimerId !== null) {
       clearTimeout(this.blinkTimerId)
       this.blinkTimerId = null
@@ -309,8 +429,22 @@ export default class AdvancedModel extends Live2DModel {
     }, time_ms)
   }
 
-  private async updateAutoBlink(): Promise<void> {
-    while (this.autoBlink) {
+  public override destroy(options?: Parameters<Live2DModel['destroy']>[0]): void {
+    if (this.destroyed) return
+    this.actionController.abort()
+    this.cancelPendingActions()
+    this.autoBlink = false
+    this.blinkGeneration++
+    if (this.blinkTimerId !== null) clearTimeout(this.blinkTimerId)
+    this.blinkTimerId = null
+    this.restoreBodyUpdate?.()
+    this.restoreBodyUpdate = null
+    this.visualEffectManager.disableAll()
+    super.destroy(options)
+  }
+
+  private async updateAutoBlink(generation: number): Promise<void> {
+    while (this.autoBlink && generation === this.blinkGeneration && !this.destroyed) {
       const now = Date.now()
       if (this.lastChangeBlinkTime && now - this.lastChangeBlinkTime < 2500) {
         await AnimationManager.delay(500)

@@ -183,6 +183,21 @@ function calculatePathA_ContentBased(snippet: SnippetData): {
         detail: `${snippet.type}: no moveSpeed, type default=${def}ms`
       }
     }
+    case 'Motion': {
+      if (getSnippetDataField(snippet, 'actions') !== undefined) {
+        const duration = getSnippetDataField(snippet, 'duration') ?? 2
+        return {
+          durationMs: duration * 1000,
+          source: 'data_duration',
+          detail: `Motion sequence: duration=${duration}s`
+        }
+      }
+      return {
+        durationMs: SNIPPET_TYPE_DEFAULTS.Motion,
+        source: 'type_default',
+        detail: `Motion: type default=${SNIPPET_TYPE_DEFAULTS.Motion}ms`
+      }
+    }
     case 'DoParam': {
       const params = getSnippetDataField(snippet, 'params')
       if (Array.isArray(params) && params.length > 0) {
@@ -326,7 +341,9 @@ function crossValidate(
     }
   }
 
-  finalDurationMs = clampDuration(finalDurationMs)
+  if (!(snippet.type === 'Motion' && snippet.data.actions !== undefined)) {
+    finalDurationMs = clampDuration(finalDurationMs)
+  }
 
   return { finalDurationMs, selectedSource, decisionReason, warnings }
 }
