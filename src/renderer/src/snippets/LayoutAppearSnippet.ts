@@ -66,5 +66,7 @@ export default class LayoutAppearSnippet extends BaseSnippet {
       // 入场动作播完再继续剧情：角色到位并完成动作后才开始说话（与原项目一致）
       await model.waitForMotionsFinished()
     }
+    // 入场后进入默认待机循环：台词间隙保持自然站立，不再僵在入场动作最后一帧
+    model.startBodyIdleLoop()
   }
 }

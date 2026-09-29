@@ -13,6 +13,64 @@ import { AlphaFilter } from 'pixi.js'
 import { ILogObj, Logger } from 'tslog'
 import getSubLogger from '../utils/Logger'
 
+/**
+ * 素材库里混有两种 Cubism 参数 ID 命名：Cubism2 风格全大写下划线（PARAM_ARM_R_1）
+ * 与 Cubism4 驼峰（ParamArmR1）。ID 与模型对不上的动作会正常"启动"（startMotion
+ * 返回 true），但写不进任何模型参数——表现为动作完全无响应。同一别名组内的 ID
+ * 指同一逻辑参数；加载动作时按模型实际 ID 集合归一化。
+ */
+const MOTION_ID_ALIAS_GROUPS: ReadonlyArray<readonly string[]> = [
+  ['PARAM_ANGLE_X', 'ParamAngleX'],
+  ['PARAM_ANGLE_Y', 'ParamAngleY'],
+  ['PARAM_ANGLE_Z', 'ParamAngleZ'],
+  ['PARAM_EYE_L_OPEN', 'ParamEyeLOpen'],
+  ['PARAM_EYE_R_OPEN', 'ParamEyeROpen'],
+  ['PARAM_EYE_BALL_X', 'ParamEyeBallX', 'ParamEyeballX'],
+  ['PARAM_EYE_BALL_Y', 'ParamEyeBallY', 'ParamEyeballY'],
+  ['PARAM_EYE_L_SMILE', 'ParamEyeLSmile'],
+  ['PARAM_EYE_R_SMILE', 'ParamEyeRSmile'],
+  ['PARAM_BROW_L_X', 'ParamBrowLX'],
+  ['PARAM_BROW_R_X', 'ParamBrowRX'],
+  ['PARAM_BROW_L_Y', 'ParamBrowLY'],
+  ['PARAM_BROW_R_Y', 'ParamBrowRY'],
+  ['PARAM_BROW_L_FORM', 'ParamBrowLForm'],
+  ['PARAM_BROW_R_FORM', 'ParamBrowRForm'],
+  ['PARAM_MOUTH_OPEN_Y', 'ParamMouthOpenY'],
+  ['PARAM_MOUTH_FORM', 'ParamMouthForm'],
+  ['PARAM_BODY_ANGLE_X', 'ParamBodyAngleX'],
+  ['PARAM_BODY_ANGLE_Y', 'ParamBodyAngleY'],
+  ['PARAM_BODY_ANGLE_Z', 'ParamBodyAngleZ'],
+  ['PARAM_BREATH', 'ParamBreath'],
+  ['PARAM_POSITION_X', 'ParamPositionX'],
+  ['PARAM_POSITION_Y', 'ParamPositionY'],
+  ['PARAM_ROTATION_Z', 'ParamRotationZ'],
+  ['PARAM_UPPER_BODY', 'ParamUpperBody'],
+  ['PARAM_UPPER_BODY_Z', 'ParamUpperBodyZ'],
+  ['PARAM_SHOULDER_L', 'ParamShoulderL'],
+  ['PARAM_SHOULDER_R', 'ParamShoulderR'],
+  ['PARAM_LEG_L_Z', 'ParamLegLZ'],
+  ['PARAM_LEG_R_Z', 'ParamLegRZ'],
+  ['PARAM_FINGER_L', 'ParamFingerL'],
+  ['PARAM_FINGER_R', 'ParamFingerR']
+]
+
+const MOTION_PARAMETER_ID_ALIASES: Map<string, readonly string[]> = (() => {
+  const map = new Map<string, readonly string[]>()
+  const add = (group: readonly string[]): void => {
+    for (const id of group) map.set(id, group.filter((candidate) => candidate !== id))
+  }
+  for (const group of MOTION_ID_ALIAS_GROUPS) add(group)
+  for (let i = 1; i <= 9; i++) {
+    add([`PARAM_ARM_L_${i}`, `ParamArmL${i}`])
+    add([`PARAM_ARM_R_${i}`, `ParamArmR${i}`])
+  }
+  for (const suffix of 'ABCDEFGHIJK') {
+    add([`PARAM_HAND_L_${suffix}`, `ParamHandL${suffix}`])
+    add([`PARAM_HAND_R_${suffix}`, `ParamHandR${suffix}`])
+  }
+  return map
+})()
+
 export default class AdvancedModel extends Live2DModel {
   public autoBlink: boolean = true
   public lastChangeBlinkTime: number | null = null
@@ -23,6 +81,9 @@ export default class AdvancedModel extends Live2DModel {
   private bodyIgnoredParamIds: string[] = []
   private restoreBodyUpdate: (() => void) | null = null
   private readonly actionController = new AbortController()
+  private defaultMotionName: string | null = null
+  private bodyIdleFallbackArmed = false
+  private bodyIdleFallbackGeneration = -1
 
   /** Aborted when this model is destroyed; suitable for a snippet action scope. */
   public get actionSignal(): AbortSignal {
@@ -47,6 +108,7 @@ export default class AdvancedModel extends Live2DModel {
     }
     this.visible = true
     this.internalModel.extendParallelMotionManager(2)
+    this.installMotionIdNormalization()
     this.installBodyParameterIsolation()
 
     this.internalModel.parallelMotionManager[0].stopAllMotions()
@@ -56,6 +118,7 @@ export default class AdvancedModel extends Live2DModel {
     const groups = motionManager.motionGroups
     const defaultMotion = groups && groups['w-normal-default01'] ? 'w-normal-default01' : null
     const defaultFacial = groups && groups['face_normal_01'] ? 'face_normal_01' : null
+    this.defaultMotionName = defaultMotion
 
     if (defaultMotion) {
       this.internalModel.parallelMotionManager[0].startMotion(
@@ -86,11 +149,49 @@ export default class AdvancedModel extends Live2DModel {
   }
 
   /**
+   * Wrap loadMotion so every loaded clip gets its curve ids normalized to the
+   * model's actual parameter ids. Runs once per cached motion object (loadMotion
+   * memoizes), before the clip is ever started.
+   */
+  private installMotionIdNormalization(): void {
+    const internal = this.internalModel
+    if (!(internal instanceof Cubism4InternalModel)) return
+    const core = internal.coreModel as unknown as {
+      _parameterIds?: string[]
+      parameters?: { ids?: string[] }
+    }
+    const modelIds = core._parameterIds ?? core.parameters?.ids
+    if (!modelIds?.length) return
+    const idSet = new Set(modelIds)
+    const motionManager = internal.motionManager
+    const originalLoad = motionManager.loadMotion.bind(motionManager)
+    motionManager.loadMotion = (group: string, index: number) =>
+      Promise.resolve(originalLoad(group, index)).then((motion) => {
+        if (motion) this.normalizeMotionParameterIds(motion, idSet)
+        return motion
+      })
+  }
+
+  private normalizeMotionParameterIds(motion: unknown, modelIds: Set<string>): void {
+    const data = (motion as { _motionData?: { curves?: Array<{ id: string }> } })._motionData
+    if (!data?.curves) return
+    for (const curve of data.curves) {
+      const id = curve.id
+      if (!id || modelIds.has(id)) continue
+      for (const candidate of MOTION_PARAMETER_ID_ALIASES.get(id) ?? []) {
+        if (modelIds.has(candidate)) {
+          curve.id = candidate
+          break
+        }
+      }
+    }
+  }
+
+  /**
    * The dependency implements ignoreParamIds by deleting cached motion curves.
    * Preserve parameters around body updates instead, leaving every clip reusable.
    */
-  private installBodyParameterIsolation(): void {
-    const manager = this.internalModel.parallelMotionManager[0]
+  private installBodyParameterIsolation(): void {    const manager = this.internalModel.parallelMotionManager[0]
     const originalUpdate = manager.update
     manager.update = (core, now): boolean => {
       const internal = this.internalModel
@@ -103,8 +204,9 @@ export default class AdvancedModel extends Live2DModel {
               ? internal.coreModel.getParamFloat(id)
               : 0
       }))
+      let updated: boolean
       try {
-        return originalUpdate.call(manager, core, now)
+        updated = originalUpdate.call(manager, core, now)
       } finally {
         for (const { id, value } of values) {
           if (internal instanceof Cubism4InternalModel) {
@@ -114,10 +216,47 @@ export default class AdvancedModel extends Live2DModel {
           }
         }
       }
+      this.maybeStartBodyIdleFallback()
+      return updated
     }
     this.restoreBodyUpdate = () => {
       manager.update = originalUpdate
     }
+  }
+
+  /**
+   * PJSK 的动作素材是一次性播放：播完 Duration 秒后队列判结束、参数停更，
+   * 角色会一直僵在最后一帧（观感即"动一下就站桩"）。武装标志由动作 cue 与
+   * 入场结束设置；body 通道一旦空闲就重启默认待机动作（入场/退场同款的自然
+   * 站立循环），直到下一个 cue 或退场接管。代数检查保证回落永不覆盖新 cue，
+   * legacy 的 waitForMotionsFinished 路径通过 applyMotion 的 disarm 保持原语义。
+   */
+  private maybeStartBodyIdleFallback(): void {
+    if (!this.bodyIdleFallbackArmed) return
+    const internal = this.internalModel
+    const manager = internal?.parallelMotionManager[0]
+    if (!internal || !manager || this.destroyed) return
+    if (!manager.isFinished() || manager.playing) return
+    this.bodyIdleFallbackArmed = false
+    if (this.bodyIdleFallbackGeneration !== this.channelGeneration[0]) return
+    if (!this.defaultMotionName) return
+    const alpha = (this.filters?.[0] as AlphaFilter | undefined)?.alpha ?? 0
+    if (alpha <= 0.01) return
+    queueMicrotask(() => {
+      void this.startCharacterChannel(0, this.defaultMotionName as string, [], undefined, undefined, true)
+    })
+  }
+
+  /** 动作 cue 开始时调用：该动作播完后回落到默认待机，而不是僵住。 */
+  private armBodyIdleFallback(generation: number): void {
+    this.bodyIdleFallbackArmed = true
+    this.bodyIdleFallbackGeneration = generation
+  }
+
+  /** 入场动作播完后调用：body 通道进入默认待机循环，角色在台词间保持自然站立。 */
+  public startBodyIdleLoop(): void {
+    this.bodyIdleFallbackGeneration = this.channelGeneration[0]
+    this.bodyIdleFallbackArmed = true
   }
 
   private eyeParameterIds(): string[] {
@@ -131,9 +270,16 @@ export default class AdvancedModel extends Live2DModel {
     name: string,
     ignoredParamIds: string[] = [],
     signal?: AbortSignal,
-    canApply?: () => boolean
+    canApply?: () => boolean,
+    armIdleFallback = false
   ): Promise<void> {
     const generation = ++this.channelGeneration[channel]
+    if (channel === 0) {
+      // legacy 入场/退场/标量 Motion 播完需要"等播完"的原语义，必须解除回落武装；
+      // 只有动作 cue（armIdleFallback=true）才在播完后回落待机。
+      this.bodyIdleFallbackArmed = armIdleFallback
+      if (armIdleFallback) this.bodyIdleFallbackGeneration = generation
+    }
     const internal = this.internalModel
     if (!internal || this.destroyed || signal?.aborted || this.actionSignal.aborted) return
     const manager = internal.parallelMotionManager[channel]
@@ -199,7 +345,9 @@ export default class AdvancedModel extends Live2DModel {
             this.internalModel instanceof Cubism2InternalModel ? 'PARAM_MOUTH_OPEN_Y' : 'ParamMouthOpenY'
           ],
           signal,
-          canApply
+          canApply,
+          // 该手势播完后回落默认待机：连续 cue 之间角色保持自然站立，不再僵在最后一帧。
+          true
         )
       )
     }
@@ -209,6 +357,7 @@ export default class AdvancedModel extends Live2DModel {
 
   /** Cancel only queued loads/reservations, retaining the current visible pose. */
   public cancelPendingActions(): void {
+    this.bodyIdleFallbackArmed = false
     for (const channel of [0, 1] as const) {
       this.channelGeneration[channel]++
       this.internalModel?.parallelMotionManager[channel]?.state.setReserved(undefined, undefined, 0)
