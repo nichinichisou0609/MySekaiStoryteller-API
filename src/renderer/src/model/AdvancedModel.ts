@@ -74,7 +74,7 @@ const MOTION_PARAMETER_ID_ALIASES: Map<string, readonly string[]> = (() => {
 export default class AdvancedModel extends Live2DModel {
   /**
    * 表演续演间隔（毫秒），由宿主配置下发（video.idleChainGapSec）。
-   * 0 = 关闭续演：动作播完回落一次默认待机，之后保持安静（只有呼吸与眨眼）。
+   * 0 = 关闭续演：动作播完保持结束时的姿势（不回落站立），直到下一个 cue。
    * >0 = 间隔（±25% 抖动）后再接一个同情绪族手势。
    */
   public static idleChainGapMs = 0
@@ -236,7 +236,7 @@ export default class AdvancedModel extends Live2DModel {
 
   /**
    * body 通道空闲后的接续（idleChainGapMs 控制）：
-   * - 0：回落一次默认待机（回到中性站姿），不再接续——"动作尽可能少"的默认舞台风格
+   * - 0：保持动作结束姿势（不回落站立），不再接续——剧本 cue 之间的自然停顿
    * - >0：等待间隔（±25% 抖动）后再接一个同情绪族手势；期间来新 cue 会推进代数，定时器自然失效
    * 代数检查保证任何路径都不会覆盖新 cue；legacy 的 waitForMotionsFinished
    * 路径通过 applyMotion 的 disarm 保持"等播完"的原语义。
@@ -264,13 +264,8 @@ export default class AdvancedModel extends Live2DModel {
         if (!next) return
         void this.startCharacterChannel(0, next, [], undefined, undefined, true)
       }, gapMs * (0.75 + Math.random() * 0.5))
-      return
     }
-    const fallback = this.defaultMotionName
-    if (!fallback) return
-    queueMicrotask(() => {
-      void this.startCharacterChannel(0, fallback, [], undefined, undefined, false)
-    })
+    // gap=0：不回落站立，保持动作结束时的姿势，直到下一个 cue 或退场接管
   }
 
   private pickChainMotion(): string | null {
