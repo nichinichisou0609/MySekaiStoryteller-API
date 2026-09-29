@@ -47,6 +47,8 @@ export interface VideoConfig {
   recordKeyframeIntervalSec: number
   /** record 模式采集帧率上限；0 = 跟随 video.fps */
   recordCaptureFps: number
+  /** 表演续演间隔（秒）；0 = 关闭续演，动作播完回落默认待机 */
+  idleChainGapSec: number
 }
 
 export interface ExportTask {
@@ -368,7 +370,8 @@ export class VideoApiServer {
           crf: this.video.crf,
           audioBitrate: this.video.audioBitrate,
           watermark: this.video.watermark,
-          watermarkText: this.video.watermarkText
+          watermarkText: this.video.watermarkText,
+          idleChainGapSec: this.video.idleChainGapSec
         },
         ...(this.extraHealthProvider ? this.extraHealthProvider() : {})
       })
@@ -609,7 +612,8 @@ export class VideoApiServer {
       recordTargetSizeMb: this.video.recordTargetSizeMb,
       recordBitrateOvershoot: this.video.recordBitrateOvershoot,
       recordKeyframeIntervalSec: this.video.recordKeyframeIntervalSec,
-      recordCaptureFps: this.video.recordCaptureFps
+      recordCaptureFps: this.video.recordCaptureFps,
+      idleChainGapSec: this.video.idleChainGapSec
     }
 
     const exportPromise = new Promise<ApiExportResponse>((resolve, reject) => {

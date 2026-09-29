@@ -257,6 +257,7 @@ export class App {
             recordStreamCopy?: 'auto' | 'on' | 'off'
             recordTargetSizeMb?: number
             recordCaptureFps?: number
+            idleChainGapSec?: number
           }
           tts?: ApiExportTtsConfig
           bgm?: ApiExportBgmConfig
@@ -347,6 +348,7 @@ export class App {
       recordBitrateOvershoot?: number
       recordKeyframeIntervalSec?: number
       recordCaptureFps?: number
+      idleChainGapSec?: number
     },
     ttsConfig?: ApiExportTtsConfig,
     bgmConfig?: ApiExportBgmConfig,
@@ -368,6 +370,8 @@ export class App {
     this.applyApiExportConfig(ttsConfig, bgmConfig)
 
     AnimationManager.exportSpeedMultiplier = 1
+    // 表演续演间隔由宿主配置下发；0 = 关闭续演（动作播完回落默认待机后保持安静）
+    AdvancedModel.idleChainGapMs = Math.max(0, (videoConfig.idleChainGapSec ?? 0) * 1000)
 
     await this.initializeManagers(storyData)
     this.initializeRenderer(videoConfig.renderScale, true, videoConfig.width, videoConfig.height)

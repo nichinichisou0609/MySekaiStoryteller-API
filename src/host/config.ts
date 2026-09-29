@@ -75,7 +75,14 @@ const VideoSchema = z.object({
    * 编码器跟不上时采集帧率本就低于设定值，调小只是把既成事实变显式：
    * 编码量随之下降，录制期间 CPU/GPU 争缓减少。低于编码器实际能力没有意义。
    */
-  recordCaptureFps: z.number().default(0)
+  recordCaptureFps: z.number().default(0),
+  /**
+   * 表演续演间隔（秒，默认 0 = 关闭续演）。角色动作播完后的行为：
+   * - 0：回落一次默认待机（回到中性站姿），之后保持安静，只有呼吸与眨眼
+   * - >0：按该间隔（±25% 抖动）再接一个同情绪族手势，间隔内保持当前姿态
+   * 关闭是"动作尽可能少"的默认舞台风格；想要早期"连续表演"效果再调大。
+   */
+  idleChainGapSec: z.number().default(0)
 })
 
 const RenderSchema = z.object({
@@ -235,6 +242,10 @@ function applyEnvOverrides(config: Omit<HostConfig, 'rootDir' | 'paths'>): void 
   if (env.MSS_RECORD_KEYFRAME_INTERVAL_SEC) {
     const v = parseFloat(env.MSS_RECORD_KEYFRAME_INTERVAL_SEC)
     if (Number.isFinite(v) && v >= 0) config.video.recordKeyframeIntervalSec = v
+  }
+  if (env.MSS_IDLE_CHAIN_GAP_SEC) {
+    const v = parseFloat(env.MSS_IDLE_CHAIN_GAP_SEC)
+    if (Number.isFinite(v) && v >= 0) config.video.idleChainGapSec = v
   }
 
   // render

@@ -72,6 +72,13 @@ const MOTION_PARAMETER_ID_ALIASES: Map<string, readonly string[]> = (() => {
 })()
 
 export default class AdvancedModel extends Live2DModel {
+  /**
+   * 表演续演间隔（毫秒），由宿主配置下发（video.idleChainGapSec）。
+   * 0 = 关闭续演：动作播完回落一次默认待机，之后保持安静（只有呼吸与眨眼）。
+   * >0 = 间隔（±25% 抖动）后再接一个同情绪族手势。
+   */
+  public static idleChainGapMs = 0
+
   public autoBlink: boolean = true
   public lastChangeBlinkTime: number | null = null
   public readonly visualEffectManager: VisualEffectManager = new VisualEffectManager(this)
@@ -84,6 +91,7 @@ export default class AdvancedModel extends Live2DModel {
   private defaultMotionName: string | null = null
   private bodyChainArmed = false
   private bodyChainGeneration = -1
+  private bodyChainTimer: ReturnType<typeof setTimeout> | null = null
   private recentBodyMotions: string[] = []
 
   /** Aborted when this model is destroyed; suitable for a snippet action scope. */
@@ -227,10 +235,10 @@ export default class AdvancedModel extends Live2DModel {
   }
 
   /**
-   * 连续表演：body 通道一旦空闲就接着演下一个动作，直到下一个剧本 cue 或退场
-   * 接管——不再出现"演一秒站五秒"。选择规则：优先与刚演过的动作同情绪族
-   * （w-cute-xxx → 其他 w-cute-*），避开最近演过的两个；族内没有别的可演就退回
-   * 默认待机。代数检查保证续演永不覆盖新 cue，legacy 的 waitForMotionsFinished
+   * body 通道空闲后的接续（idleChainGapMs 控制）：
+   * - 0：回落一次默认待机（回到中性站姿），不再接续——"动作尽可能少"的默认舞台风格
+   * - >0：等待间隔（±25% 抖动）后再接一个同情绪族手势；期间来新 cue 会推进代数，定时器自然失效
+   * 代数检查保证任何路径都不会覆盖新 cue；legacy 的 waitForMotionsFinished
    * 路径通过 applyMotion 的 disarm 保持"等播完"的原语义。
    */
   private maybeStartBodyChain(): void {
@@ -243,10 +251,25 @@ export default class AdvancedModel extends Live2DModel {
     if (this.bodyChainGeneration !== this.channelGeneration[0]) return
     const alpha = (this.filters?.[0] as AlphaFilter | undefined)?.alpha ?? 0
     if (alpha <= 0.01) return
-    const next = this.pickChainMotion()
-    if (!next) return
+    const gapMs = AdvancedModel.idleChainGapMs
+    if (gapMs > 0) {
+      if (this.bodyChainTimer) clearTimeout(this.bodyChainTimer)
+      this.bodyChainTimer = setTimeout(() => {
+        this.bodyChainTimer = null
+        if (this.destroyed) return
+        const mgr = this.internalModel?.parallelMotionManager[0]
+        if (!mgr || this.bodyChainGeneration !== this.channelGeneration[0]) return
+        if (!mgr.isFinished() || mgr.playing) return
+        const next = this.pickChainMotion()
+        if (!next) return
+        void this.startCharacterChannel(0, next, [], undefined, undefined, true)
+      }, gapMs * (0.75 + Math.random() * 0.5))
+      return
+    }
+    const fallback = this.defaultMotionName
+    if (!fallback) return
     queueMicrotask(() => {
-      void this.startCharacterChannel(0, next, [], undefined, undefined, true)
+      void this.startCharacterChannel(0, fallback, [], undefined, undefined, false)
     })
   }
 
