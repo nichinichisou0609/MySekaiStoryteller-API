@@ -426,7 +426,7 @@ export default class VideoExportManager {
     // 时长用的是录制前估算（TTS 实际时长通常不低于估算），留 15% 余量。
     // 浏览器编码器是 VBR：简单画面上的实际产出常低于请求（服务器实测
     // 请求 2.9Mbps 只出 2.1Mbps），overshoot 把请求抬高让复杂画面多分比特；
-    // 体积仍以目标为锚（编码器完全服从时最坏 ≈ 目标 × 0.85 × overshoot）。
+    // 体积由收尾的上限兜底：预估超出目标时宿主改为按精确码率重编码。
     const targetSizeMb = options.recordTargetSizeMb ?? 0
     if (targetSizeMb > 0) {
       const streamCopyPlanned =
@@ -2098,6 +2098,13 @@ export default class VideoExportManager {
     if (canStreamCopy) {
       try {
         tempFiles.invoked = true
+        // 目标体积同时作为成片上限：过头系数抬高了请求码率，编码器万一全额
+        // 兑现，宿主会改为按精确码率重编码压回目标，否则照常流拷贝
+        const targetSizeMb = options.recordTargetSizeMb ?? 0
+        const sizeCap =
+          targetSizeMb > 0 && totalDurationMs > 0
+            ? { maxBytes: targetSizeMb * 1024 * 1024, durationSec: totalDurationMs / 1000 }
+            : undefined
         const copyResult = await window.electron.ipcRenderer.invoke(
           'electron:api-remux-video-from-files',
           {
@@ -2105,13 +2112,15 @@ export default class VideoExportManager {
             audioPath: audioFilePath,
             outputPath,
             audioBitrate,
-            keepInputs: true
+            keepInputs: true,
+            sizeCap
           }
         )
         if (copyResult?.success) {
           await this.removeTempPaths([videoFilePath, audioFilePath])
           this.logger.info(
-            `API: Video stream-copied to ${copyResult.outputPath}, ` +
+            `API: Video ${copyResult.sizeCapped ? 'size-capped re-encoded' : 'stream-copied'} to ` +
+              `${copyResult.outputPath}, ` +
               `size=${((copyResult.fileSize || 0) / 1024 / 1024).toFixed(2)} MB`
           )
           return

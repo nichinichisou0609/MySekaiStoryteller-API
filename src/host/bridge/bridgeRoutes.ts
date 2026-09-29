@@ -9,7 +9,9 @@ import {
   apiMergeVideoAudioWithCompression,
   apiMuxVideoAudioCopy,
   apiCopyVideo,
+  apiEncodeVideoAudioToBitrate,
   encodeFramesToVideo,
+  parseBitrateToBps,
   VideoEncoderChoice
 } from '../../shared/ffmpeg'
 
@@ -181,6 +183,11 @@ export function createBridgeRouter(deps: BridgeDeps): Router {
           audioBitrate: string
           /** true 时保留输入文件由调用方自行清理（record 流拷贝路径的回退需要） */
           keepInputs?: boolean
+          /**
+           * 体积上限（record 目标体积）。预估成片超出上限 2% 以上时改为按精确码率
+           * 重编码，否则照常流拷贝。durationSec 为音频混音用的时间轴总时长。
+           */
+          sizeCap?: { maxBytes: number; durationSec: number }
         }
         logger.info(
           `[Bridge] API remux: videoPath=${payload.videoPath}, audioPath=${payload.audioPath}, outputPath=${payload.outputPath}`
@@ -193,10 +200,41 @@ export function createBridgeRouter(deps: BridgeDeps): Router {
             await fs.promises.mkdir(outputDir, { recursive: true })
           }
 
-          if (payload.audioPath && fs.existsSync(payload.audioPath)) {
+          const hasAudio = !!payload.audioPath && fs.existsSync(payload.audioPath)
+          let cappedVideoBps = 0
+          const cap = payload.sizeCap
+          if (cap && cap.maxBytes > 0 && cap.durationSec > 0) {
+            const videoBytes = (await fs.promises.stat(payload.videoPath)).size
+            const audioBytes = hasAudio
+              ? (parseBitrateToBps(payload.audioBitrate) / 8) * cap.durationSec
+              : 0
+            const projected = videoBytes + audioBytes
+            if (projected > cap.maxBytes * 1.02) {
+              cappedVideoBps = Math.floor(
+                ((cap.maxBytes * 0.97 - audioBytes) * 8) / cap.durationSec
+              )
+              logger.info(
+                `[Bridge] API remux: projected ${(projected / 1024 / 1024).toFixed(2)} MB exceeds cap ` +
+                  `${(cap.maxBytes / 1024 / 1024).toFixed(2)} MB, re-encoding at ` +
+                  `${(cappedVideoBps / 1_000_000).toFixed(2)}Mbps`
+              )
+            }
+          }
+
+          if (cappedVideoBps >= 300_000) {
+            await apiEncodeVideoAudioToBitrate(
+              payload.videoPath,
+              hasAudio ? payload.audioPath : undefined,
+              payload.outputPath,
+              payload.audioBitrate,
+              config.video.encoder as VideoEncoderChoice,
+              cappedVideoBps,
+              cap!.durationSec
+            )
+          } else if (hasAudio) {
             await apiMuxVideoAudioCopy(
               payload.videoPath,
-              payload.audioPath,
+              payload.audioPath!,
               payload.outputPath,
               payload.audioBitrate
             )
@@ -213,11 +251,13 @@ export function createBridgeRouter(deps: BridgeDeps): Router {
           }
 
           const outputSize = (await fs.promises.stat(payload.outputPath)).size
+          const sizeCapped = cappedVideoBps >= 300_000
           logger.info(
             `[Bridge] API remux: Video exported successfully: ${payload.outputPath}, ` +
-              `size=${(outputSize / 1024 / 1024).toFixed(2)} MB, elapsedMs=${Date.now() - channelStart}`
+              `size=${(outputSize / 1024 / 1024).toFixed(2)} MB, elapsedMs=${Date.now() - channelStart}` +
+              (sizeCapped ? ' (size-capped re-encode)' : '')
           )
-          return { success: true, outputPath: payload.outputPath, fileSize: outputSize }
+          return { success: true, outputPath: payload.outputPath, fileSize: outputSize, sizeCapped }
         } catch (error) {
           logger.error('[Bridge] API remux: Failed to remux video from files', error)
           return {

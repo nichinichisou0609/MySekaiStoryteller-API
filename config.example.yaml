@@ -51,12 +51,13 @@ video:
   recordTargetSizeMb: 0    # 流拷贝路径的目标成片体积 MB（0 = 不启用，按 recordBitrate 固定码率）。
                            # >0 时按录制前估算时长反推视频码率（扣除音轨、留 15% 余量，
                            # 下限 600kbps、上限 recordBitrate），不同长度的故事都落在目标附近。
-                           # 仅在 recordStreamCopy 为 on/auto 且浏览器支持 mp4 录制时生效
+                           # 仅在 recordStreamCopy 为 on/auto 且浏览器支持 mp4 录制时生效。
+                           # 同时是成片上限：预估超出 2% 以上时收尾按精确码率重编码压回
                            # （env: MSS_RECORD_TARGET_SIZE_MB）
   recordBitrateOvershoot: 1 # 目标体积反推码率的过头系数（1-2，默认 1）。浏览器编码器是 VBR，
                            # 简单画面上实际产出常低于请求；按系数抬高请求让复杂画面
-                           # 多分比特，体积仍以目标值为锚（编码器完全服从时最坏 ≈
-                           # 目标 × 0.85 × 系数，建议不超过 1.4）
+                           # 多分比特。编码器全额兑现导致预估成片超出目标时，收尾改为
+                           # 按精确码率重编码压回目标（多一次硬件编码），体积不会超标
                            # （env: MSS_RECORD_BITRATE_OVERSHOOT）
   recordKeyframeIntervalSec: 0 # record 模式关键帧间隔秒数（0 = 浏览器默认，Chrome 约每 100 帧一个）。
                            # 录制编码是 Constrained Baseline，I 帧约为 P 帧的 10 倍大；

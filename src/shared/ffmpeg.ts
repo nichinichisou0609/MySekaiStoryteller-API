@@ -655,6 +655,114 @@ export async function apiCopyVideo(inputPath: string, outputPath: string): Promi
   await runFfmpegWithProgress(ffmpegArgs, estimatedDuration)
 }
 
+/** '128k' / '1.5M' / '96000' → bps；无法解析返回 fallback */
+export function parseBitrateToBps(value: string, fallback = 128_000): number {
+  const m = /^\s*([\d.]+)\s*([kKmM]?)\s*$/.exec(value)
+  if (!m) return fallback
+  const n = parseFloat(m[1])
+  if (!Number.isFinite(n) || n <= 0) return fallback
+  const unit = m[2].toLowerCase()
+  return Math.round(unit === 'm' ? n * 1_000_000 : unit === 'k' ? n * 1000 : n)
+}
+
+/** 按目标码率编码的视频参数（VBR + 峰值约束）；不支持的硬件编码器按 libx264 处理 */
+function targetBitrateVideoArgs(
+  gpu: 'nvidia' | 'amd' | 'intel' | 'cpu',
+  videoBps: number
+): string[] {
+  const kbps = Math.max(1, Math.round(videoBps / 1000))
+  const rate = ['-b:v', `${kbps}k`, '-maxrate', `${kbps * 2}k`, '-bufsize', `${kbps * 4}k`]
+  if (gpu === 'nvidia') {
+    return [
+      '-c:v',
+      'h264_nvenc',
+      '-preset',
+      'p5',
+      '-tune',
+      'hq',
+      '-profile:v',
+      'high',
+      '-rc',
+      'vbr',
+      ...rate,
+      '-bf',
+      '3',
+      '-rc-lookahead',
+      '32',
+      '-spatial-aq',
+      '1',
+      '-temporal-aq',
+      '1',
+      '-pix_fmt',
+      'yuv420p'
+    ]
+  }
+  if (gpu === 'amd') {
+    return [
+      '-c:v',
+      'h264_amf',
+      '-quality',
+      'quality',
+      '-rc',
+      'vbr_peak',
+      ...rate,
+      '-pix_fmt',
+      'yuv420p'
+    ]
+  }
+  return ['-c:v', 'libx264', '-preset', 'veryfast', ...rate, '-pix_fmt', 'yuv420p']
+}
+
+/**
+ * record 流拷贝路径的体积保险：录制产物超出目标体积时，按精确码率重编码视频并合流。
+ * 保持录制分辨率与原始时间戳（不缩放、不补帧），与流拷贝产物同形；
+ * 硬件编码失败回退 libx264。
+ */
+export async function apiEncodeVideoAudioToBitrate(
+  videoPath: string,
+  audioPath: string | undefined,
+  outputPath: string,
+  audioBitrate: string,
+  encoder: VideoEncoderChoice,
+  videoBps: number,
+  durationSec: number
+): Promise<void> {
+  const gpu =
+    encoder === 'libx264' || encoder === 'cpu'
+      ? 'cpu'
+      : encoder === 'auto'
+        ? await detectAvailableGpuEncoder()
+        : encoder === 'nvidia' || encoder === 'amd' || encoder === 'intel'
+          ? encoder
+          : 'cpu'
+
+  const build = (g: 'nvidia' | 'amd' | 'intel' | 'cpu'): string[] => [
+    '-i',
+    videoPath,
+    ...(audioPath ? ['-i', audioPath, '-map', '0:v:0', '-map', '1:a:0'] : ['-map', '0:v:0']),
+    ...targetBitrateVideoArgs(g, videoBps),
+    '-fps_mode',
+    'passthrough',
+    ...(audioPath ? ['-c:a', 'aac', '-b:a', audioBitrate, '-shortest'] : []),
+    '-movflags',
+    '+faststart',
+    '-y',
+    outputPath
+  ]
+
+  logger.info(
+    `[API] Size-capped re-encode: encoder=${gpu}, videoBitrate=${(videoBps / 1_000_000).toFixed(2)}Mbps, ` +
+      `duration=${durationSec.toFixed(1)}s`
+  )
+  try {
+    await runFfmpegWithProgress(build(gpu), Math.max(durationSec, 10))
+  } catch (error) {
+    if (gpu === 'cpu') throw error
+    logger.warn(`Size-capped re-encode failed with ${gpu}, falling back to libx264:`, error)
+    await runFfmpegWithProgress(build('cpu'), Math.max(durationSec, 10))
+  }
+}
+
 /**
  * 帧序列合成 MP4（fast 导出 JPEG 帧路径使用）。
  * 画布可能大于目标分辨率（renderScale 超采样），统一等比缩放 + pad。
