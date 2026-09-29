@@ -82,8 +82,9 @@ export default class AdvancedModel extends Live2DModel {
   private restoreBodyUpdate: (() => void) | null = null
   private readonly actionController = new AbortController()
   private defaultMotionName: string | null = null
-  private bodyIdleFallbackArmed = false
-  private bodyIdleFallbackGeneration = -1
+  private bodyChainArmed = false
+  private bodyChainGeneration = -1
+  private recentBodyMotions: string[] = []
 
   /** Aborted when this model is destroyed; suitable for a snippet action scope. */
   public get actionSignal(): AbortSignal {
@@ -191,7 +192,8 @@ export default class AdvancedModel extends Live2DModel {
    * The dependency implements ignoreParamIds by deleting cached motion curves.
    * Preserve parameters around body updates instead, leaving every clip reusable.
    */
-  private installBodyParameterIsolation(): void {    const manager = this.internalModel.parallelMotionManager[0]
+  private installBodyParameterIsolation(): void {
+    const manager = this.internalModel.parallelMotionManager[0]
     const originalUpdate = manager.update
     manager.update = (core, now): boolean => {
       const internal = this.internalModel
@@ -216,7 +218,7 @@ export default class AdvancedModel extends Live2DModel {
           }
         }
       }
-      this.maybeStartBodyIdleFallback()
+      this.maybeStartBodyChain()
       return updated
     }
     this.restoreBodyUpdate = () => {
@@ -225,38 +227,50 @@ export default class AdvancedModel extends Live2DModel {
   }
 
   /**
-   * PJSK 的动作素材是一次性播放：播完 Duration 秒后队列判结束、参数停更，
-   * 角色会一直僵在最后一帧（观感即"动一下就站桩"）。武装标志由动作 cue 与
-   * 入场结束设置；body 通道一旦空闲就重启默认待机动作（入场/退场同款的自然
-   * 站立循环），直到下一个 cue 或退场接管。代数检查保证回落永不覆盖新 cue，
-   * legacy 的 waitForMotionsFinished 路径通过 applyMotion 的 disarm 保持原语义。
+   * 连续表演：body 通道一旦空闲就接着演下一个动作，直到下一个剧本 cue 或退场
+   * 接管——不再出现"演一秒站五秒"。选择规则：优先与刚演过的动作同情绪族
+   * （w-cute-xxx → 其他 w-cute-*），避开最近演过的两个；族内没有别的可演就退回
+   * 默认待机。代数检查保证续演永不覆盖新 cue，legacy 的 waitForMotionsFinished
+   * 路径通过 applyMotion 的 disarm 保持"等播完"的原语义。
    */
-  private maybeStartBodyIdleFallback(): void {
-    if (!this.bodyIdleFallbackArmed) return
+  private maybeStartBodyChain(): void {
+    if (!this.bodyChainArmed) return
     const internal = this.internalModel
     const manager = internal?.parallelMotionManager[0]
     if (!internal || !manager || this.destroyed) return
     if (!manager.isFinished() || manager.playing) return
-    this.bodyIdleFallbackArmed = false
-    if (this.bodyIdleFallbackGeneration !== this.channelGeneration[0]) return
-    if (!this.defaultMotionName) return
+    this.bodyChainArmed = false
+    if (this.bodyChainGeneration !== this.channelGeneration[0]) return
     const alpha = (this.filters?.[0] as AlphaFilter | undefined)?.alpha ?? 0
     if (alpha <= 0.01) return
+    const next = this.pickChainMotion()
+    if (!next) return
     queueMicrotask(() => {
-      void this.startCharacterChannel(0, this.defaultMotionName as string, [], undefined, undefined, true)
+      void this.startCharacterChannel(0, next, [], undefined, undefined, true)
     })
   }
 
-  /** 动作 cue 开始时调用：该动作播完后回落到默认待机，而不是僵住。 */
-  private armBodyIdleFallback(generation: number): void {
-    this.bodyIdleFallbackArmed = true
-    this.bodyIdleFallbackGeneration = generation
+  private pickChainMotion(): string | null {
+    const internal = this.internalModel
+    if (!internal) return null
+    const definitions = internal.motionManager.definitions as Record<string, unknown> | undefined
+    const all = Object.keys(definitions ?? {}).filter((name) => !name.startsWith('face_'))
+    if (!all.length) return this.defaultMotionName
+    const last = this.recentBodyMotions[this.recentBodyMotions.length - 1]
+    // 动作名形如 w-cute-delicious01：前两段 "w-cute" 即情绪族
+    const family = last ? last.split('-').slice(0, 2).join('-') : null
+    let pool = family ? all.filter((name) => name.startsWith(`${family}-`)) : []
+    if (pool.length <= 1) pool = all
+    const recent = new Set(this.recentBodyMotions.slice(-2))
+    const fresh = pool.filter((name) => !recent.has(name))
+    const source = fresh.length ? fresh : pool
+    return source[Math.floor(Math.random() * source.length)] ?? this.defaultMotionName
   }
 
-  /** 入场动作播完后调用：body 通道进入默认待机循环，角色在台词间保持自然站立。 */
+  /** 入场动作播完后调用：body 通道进入连续表演，台词间隙不再站桩。 */
   public startBodyIdleLoop(): void {
-    this.bodyIdleFallbackGeneration = this.channelGeneration[0]
-    this.bodyIdleFallbackArmed = true
+    this.bodyChainGeneration = this.channelGeneration[0]
+    this.bodyChainArmed = true
   }
 
   private eyeParameterIds(): string[] {
@@ -271,14 +285,18 @@ export default class AdvancedModel extends Live2DModel {
     ignoredParamIds: string[] = [],
     signal?: AbortSignal,
     canApply?: () => boolean,
-    armIdleFallback = false
+    chainAfter = false
   ): Promise<void> {
     const generation = ++this.channelGeneration[channel]
     if (channel === 0) {
-      // legacy 入场/退场/标量 Motion 播完需要"等播完"的原语义，必须解除回落武装；
-      // 只有动作 cue（armIdleFallback=true）才在播完后回落待机。
-      this.bodyIdleFallbackArmed = armIdleFallback
-      if (armIdleFallback) this.bodyIdleFallbackGeneration = generation
+      // legacy 入场/退场/标量 Motion 播完需要"等播完"的原语义，必须解除续演武装；
+      // 只有动作 cue 与续演（chainAfter=true）才会在播完后接着演下一个。
+      this.bodyChainArmed = chainAfter
+      if (chainAfter) {
+        this.bodyChainGeneration = generation
+        this.recentBodyMotions.push(name)
+        if (this.recentBodyMotions.length > 4) this.recentBodyMotions.shift()
+      }
     }
     const internal = this.internalModel
     if (!internal || this.destroyed || signal?.aborted || this.actionSignal.aborted) return
@@ -346,7 +364,7 @@ export default class AdvancedModel extends Live2DModel {
           ],
           signal,
           canApply,
-          // 该手势播完后回落默认待机：连续 cue 之间角色保持自然站立，不再僵在最后一帧。
+          // 该手势播完后接着演下一个（同情绪族），台词期间连续表演不站桩。
           true
         )
       )
@@ -357,7 +375,7 @@ export default class AdvancedModel extends Live2DModel {
 
   /** Cancel only queued loads/reservations, retaining the current visible pose. */
   public cancelPendingActions(): void {
-    this.bodyIdleFallbackArmed = false
+    this.bodyChainArmed = false
     for (const channel of [0, 1] as const) {
       this.channelGeneration[channel]++
       this.internalModel?.parallelMotionManager[channel]?.state.setReserved(undefined, undefined, 0)
