@@ -328,7 +328,8 @@ export default class VideoExportManager {
       timeslice: 100,
       estimatedDurationMs: undefined,
       // 流拷贝合流路径需要 h264/mp4 录制；off 时保持 webm + 全量重编码
-      preferMp4: options.recordStreamCopy !== undefined && options.recordStreamCopy !== 'off'
+      preferMp4: options.recordStreamCopy !== undefined && options.recordStreamCopy !== 'off',
+      keyframeIntervalMs: Math.max(0, (options.recordKeyframeIntervalSec ?? 0) * 1000)
     })
 
     recorder.setOnErrorCallback((error) => {

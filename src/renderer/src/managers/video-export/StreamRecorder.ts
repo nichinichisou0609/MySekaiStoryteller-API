@@ -11,6 +11,8 @@ export interface StreamRecorderConfig {
   estimatedDurationMs?: number
   /** 优先尝试 h264/mp4 录制（流拷贝合流路径）；不支持时自动回退 webm */
   preferMp4?: boolean
+  /** 关键帧间隔（毫秒）；0/缺省 = 浏览器默认（Chrome 约每 100 帧一个） */
+  keyframeIntervalMs?: number
 }
 
 export type StreamRecorderProgressCallback = (progress: ExportProgress) => void
@@ -147,11 +149,16 @@ export class StreamRecorder {
     this.recordedChunks = new Array<Blob>(initialCapacity)
 
     try {
-      this.mediaRecorder = new MediaRecorder(this.stream, {
+      // videoKeyFrameIntervalDuration 尚未进 TS 的 lib.dom；不认识该字段的浏览器会忽略
+      const recorderOptions: MediaRecorderOptions & { videoKeyFrameIntervalDuration?: number } = {
         mimeType,
         videoBitsPerSecond: this.config.bitrate,
         audioBitsPerSecond: 128000
-      })
+      }
+      if (this.config.keyframeIntervalMs && this.config.keyframeIntervalMs > 0) {
+        recorderOptions.videoKeyFrameIntervalDuration = this.config.keyframeIntervalMs
+      }
+      this.mediaRecorder = new MediaRecorder(this.stream, recorderOptions)
     } catch (error) {
       this.stream.getTracks().forEach((track) => track.stop())
       this.stream = null

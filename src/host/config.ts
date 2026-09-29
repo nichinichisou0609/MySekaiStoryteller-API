@@ -65,6 +65,12 @@ const VideoSchema = z.object({
    */
   recordBitrateOvershoot: z.number().default(1),
   /**
+   * record 模式关键帧间隔（秒，0 = 浏览器默认，Chrome 约每 100 帧一个）。
+   * 录制编码是 Constrained Baseline，I 帧约为 P 帧的 10 倍大，占成片字节一成以上；
+   * 拉长间隔后省下的比特在同码率下留给 P 帧。代价是播放器拖动定位变粗。
+   */
+  recordKeyframeIntervalSec: z.number().default(0),
+  /**
    * record 模式 MediaRecorder 采集帧率上限（0 = 跟随 video.fps）。
    * 编码器跟不上时采集帧率本就低于设定值，调小只是把既成事实变显式：
    * 编码量随之下降，录制期间 CPU/GPU 争缓减少。低于编码器实际能力没有意义。
@@ -225,6 +231,10 @@ function applyEnvOverrides(config: Omit<HostConfig, 'rootDir' | 'paths'>): void 
   if (env.MSS_RECORD_BITRATE_OVERSHOOT) {
     const v = parseFloat(env.MSS_RECORD_BITRATE_OVERSHOOT)
     if (Number.isFinite(v) && v >= 1 && v <= 2) config.video.recordBitrateOvershoot = v
+  }
+  if (env.MSS_RECORD_KEYFRAME_INTERVAL_SEC) {
+    const v = parseFloat(env.MSS_RECORD_KEYFRAME_INTERVAL_SEC)
+    if (Number.isFinite(v) && v >= 0) config.video.recordKeyframeIntervalSec = v
   }
 
   // render

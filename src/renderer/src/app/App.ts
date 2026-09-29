@@ -342,6 +342,7 @@ export class App {
       recordStreamCopy?: 'auto' | 'on' | 'off'
       recordTargetSizeMb?: number
       recordBitrateOvershoot?: number
+      recordKeyframeIntervalSec?: number
       recordCaptureFps?: number
     },
     ttsConfig?: ApiExportTtsConfig,
@@ -402,6 +403,7 @@ export class App {
       recordStreamCopy: videoConfig.recordStreamCopy,
       recordTargetSizeMb: videoConfig.recordTargetSizeMb,
       recordBitrateOvershoot: videoConfig.recordBitrateOvershoot,
+      recordKeyframeIntervalSec: videoConfig.recordKeyframeIntervalSec,
       recordCaptureFps: videoConfig.recordCaptureFps,
       jpegQuality: 0.85,
       batchSize: 30,

@@ -31,6 +31,8 @@ export interface VideoExportOptions {
   /** 目标体积反推码率的过头系数（1-2，默认 1）：浏览器编码器在简单画面上
    *  产出常低于请求，抬高请求让复杂画面分到更多比特；体积仍受目标值约束 */
   recordBitrateOvershoot?: number
+  /** record 模式关键帧间隔（秒）；0/缺省 = 浏览器默认（约每 100 帧） */
+  recordKeyframeIntervalSec?: number
   /** record 模式采集帧率上限；0/缺省 = 跟随 fps。调小降低编码负载，输出帧率随之变化 */
   recordCaptureFps?: number
   apiMode?: boolean

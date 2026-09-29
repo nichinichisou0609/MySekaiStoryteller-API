@@ -43,6 +43,8 @@ export interface VideoConfig {
   recordTargetSizeMb: number
   /** 目标体积反推码率的过头系数（1-2，默认 1） */
   recordBitrateOvershoot: number
+  /** record 模式关键帧间隔（秒）；0 = 浏览器默认 */
+  recordKeyframeIntervalSec: number
   /** record 模式采集帧率上限；0 = 跟随 video.fps */
   recordCaptureFps: number
 }
@@ -606,6 +608,7 @@ export class VideoApiServer {
       recordStreamCopy: this.video.recordStreamCopy,
       recordTargetSizeMb: this.video.recordTargetSizeMb,
       recordBitrateOvershoot: this.video.recordBitrateOvershoot,
+      recordKeyframeIntervalSec: this.video.recordKeyframeIntervalSec,
       recordCaptureFps: this.video.recordCaptureFps
     }
 

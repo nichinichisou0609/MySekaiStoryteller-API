@@ -58,6 +58,10 @@ video:
                            # 多分比特，体积仍以目标值为锚（编码器完全服从时最坏 ≈
                            # 目标 × 0.85 × 系数，建议不超过 1.4）
                            # （env: MSS_RECORD_BITRATE_OVERSHOOT）
+  recordKeyframeIntervalSec: 0 # record 模式关键帧间隔秒数（0 = 浏览器默认，Chrome 约每 100 帧一个）。
+                           # 录制编码是 Constrained Baseline，I 帧约为 P 帧的 10 倍大；
+                           # 拉长到 10 秒左右，省下的比特在同码率下留给 P 帧，不影响速度。
+                           # 代价是播放器拖动定位变粗（env: MSS_RECORD_KEYFRAME_INTERVAL_SEC）
   recordCaptureFps: 0       # record 模式 MediaRecorder 采集帧率上限（0 = 跟随 video.fps）。
                            # 编码器跟不上时采集帧率本就低于设定值，调小只是把既成事实变显式：
                            # 编码量随之下降，录制期间 CPU/GPU 争缓减少（渲染上限会同步压到
