@@ -9,7 +9,7 @@
  * 环境变量：MSS_API_URL（默认 http://127.0.0.1:9881）
  */
 
-import { readFileSync, existsSync, statSync, readdirSync, globSync } from 'node:fs'
+import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
@@ -196,7 +196,11 @@ function adaptStoryToAvailableAssets(story) {
   const modelsRoot = path.resolve('resources/models')
   const imagesRoot = path.resolve('resources/images')
 
-  const availableModels = globSync('**/*.model3.json', { cwd: modelsRoot }).sort()
+  const availableModels = existsSync(modelsRoot)
+    ? readdirSync(modelsRoot, { recursive: true })
+        .filter((f) => f.endsWith('.model3.json'))
+        .sort()
+    : []
   const availableImages = existsSync(imagesRoot)
     ? readdirSync(imagesRoot)
         .filter((f) => /\.(jpg|jpeg|png)$/i.test(f))

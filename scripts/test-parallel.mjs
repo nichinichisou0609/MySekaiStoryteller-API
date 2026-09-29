@@ -2,7 +2,7 @@
  * T4 并发导出测试：同时提交 N 个导出任务，验证真并行（总耗时 << N × 单任务耗时）。
  * 用法：node scripts/test-parallel.mjs [并发数，默认2]
  */
-import { readFileSync, existsSync, readdirSync, globSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync } from 'node:fs'
 
 const API_URL = process.env.MSS_API_URL || 'http://127.0.0.1:9881'
 const N = parseInt(process.argv[2] || '2', 10)
@@ -17,7 +17,11 @@ const body = JSON.stringify({ story, timeout: 420000 })
 function adaptStoryToAvailableAssets(story) {
   const modelsRoot = 'resources/models'
   const imagesRoot = 'resources/images'
-  const availableModels = globSync('**/*.model3.json', { cwd: modelsRoot }).sort()
+  const availableModels = existsSync(modelsRoot)
+    ? readdirSync(modelsRoot, { recursive: true })
+        .filter((f) => f.endsWith('.model3.json'))
+        .sort()
+    : []
   const availableImages = existsSync(imagesRoot)
     ? readdirSync(imagesRoot)
         .filter((f) => /\.(jpg|jpeg|png)$/i.test(f))
