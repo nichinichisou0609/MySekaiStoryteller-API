@@ -195,7 +195,7 @@ export class App {
     this.textures = await this.storyManager.preloadImages()
     this.logger.info(`Loaded ${this.textures.length} textures`)
 
-    await new FontFaceObserver('FOT Rodin NTLG Pro', {}).load()
+    await new FontFaceObserver('MiSans Medium', {}).load()
     this.logger.info(`Loaded fonts.`)
 
     this.logger.info('Preloaded story assets')

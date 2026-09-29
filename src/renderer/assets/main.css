@@ -1,12 +1,6 @@
 @import 'base.css';
 
-@font-face {
-  font-family: 'FOT Rodin NTLG Pro';
-  src: url('fonts/FOT-RodinNTLGPro-DB.otf') format('opentype');
-}
-
-/* 中文主字体：全部中文（含 Rodin 覆盖的字形）统一用 MiSans Medium，
-   Rodin 仅兜底 MiSans 缺失的字形，保证整行粗细一致 */
+/* 中文主字体：覆盖全简体（28967 字形），所有 UI 文本统一用它 */
 @font-face {
   font-family: 'MiSans Medium';
   src: url('fonts/MiSans-Medium.ttf') format('truetype');
@@ -46,7 +40,7 @@
 
 body {
   font-family:
-    'MiSans Medium', 'FOT Rodin NTLG Pro', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text',
+    'MiSans Medium', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text',
     'Helvetica Neue', sans-serif;
   background-color: #1a1a2e;
   background-size: cover;

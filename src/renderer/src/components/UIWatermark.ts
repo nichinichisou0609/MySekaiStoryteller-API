@@ -11,7 +11,7 @@ export default class UIWatermark extends Text {
     const style = new TextStyle({
       align: 'right',
       fill: '#FFFFFFF5',
-      fontFamily: "'MiSans Medium', 'FOT Rodin NTLG Pro'",
+      fontFamily: "'MiSans Medium', sans-serif",
       fontSize,
       lineHeight: fontSize * 1.35,
       stroke: '#4A4968D9',
