@@ -58,6 +58,13 @@ const VideoSchema = z.object({
    */
   recordTargetSizeMb: z.number().default(0),
   /**
+   * 目标体积反推码率的过头系数（1-2，默认 1）。浏览器编码器（VBR）在简单
+   * 画面上的实际产出常低于请求码率；按系数抬高请求，让复杂画面分到更多
+   * 比特。实际体积仍以目标值为锚：编码器完全服从请求时最坏 ≈ 目标 × 0.85 ×
+   * 系数，因此建议不超过 1.4。
+   */
+  recordBitrateOvershoot: z.number().default(1),
+  /**
    * record 模式 MediaRecorder 采集帧率上限（0 = 跟随 video.fps）。
    * 编码器跟不上时采集帧率本就低于设定值，调小只是把既成事实变显式：
    * 编码量随之下降，录制期间 CPU/GPU 争缓减少。低于编码器实际能力没有意义。
@@ -214,6 +221,10 @@ function applyEnvOverrides(config: Omit<HostConfig, 'rootDir' | 'paths'>): void 
   if (env.MSS_RECORD_CAPTURE_FPS) {
     const v = parseInt(env.MSS_RECORD_CAPTURE_FPS, 10)
     if (Number.isFinite(v) && v >= 0) config.video.recordCaptureFps = v
+  }
+  if (env.MSS_RECORD_BITRATE_OVERSHOOT) {
+    const v = parseFloat(env.MSS_RECORD_BITRATE_OVERSHOOT)
+    if (Number.isFinite(v) && v >= 1 && v <= 2) config.video.recordBitrateOvershoot = v
   }
 
   // render

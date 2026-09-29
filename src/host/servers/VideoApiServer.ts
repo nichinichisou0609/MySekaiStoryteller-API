@@ -41,6 +41,8 @@ export interface VideoConfig {
   recordStreamCopy: 'auto' | 'on' | 'off'
   /** 流拷贝路径的目标成片体积（MB）；0 = 按 recordBitrate 固定码率 */
   recordTargetSizeMb: number
+  /** 目标体积反推码率的过头系数（1-2，默认 1） */
+  recordBitrateOvershoot: number
   /** record 模式采集帧率上限；0 = 跟随 video.fps */
   recordCaptureFps: number
 }
@@ -603,6 +605,7 @@ export class VideoApiServer {
       recordBitrate: this.video.recordBitrate,
       recordStreamCopy: this.video.recordStreamCopy,
       recordTargetSizeMb: this.video.recordTargetSizeMb,
+      recordBitrateOvershoot: this.video.recordBitrateOvershoot,
       recordCaptureFps: this.video.recordCaptureFps
     }
 

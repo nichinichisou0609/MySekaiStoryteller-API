@@ -53,6 +53,11 @@ video:
                            # 下限 600kbps、上限 recordBitrate），不同长度的故事都落在目标附近。
                            # 仅在 recordStreamCopy 为 on/auto 且浏览器支持 mp4 录制时生效
                            # （env: MSS_RECORD_TARGET_SIZE_MB）
+  recordBitrateOvershoot: 1 # 目标体积反推码率的过头系数（1-2，默认 1）。浏览器编码器是 VBR，
+                           # 简单画面上实际产出常低于请求；按系数抬高请求让复杂画面
+                           # 多分比特，体积仍以目标值为锚（编码器完全服从时最坏 ≈
+                           # 目标 × 0.85 × 系数，建议不超过 1.4）
+                           # （env: MSS_RECORD_BITRATE_OVERSHOOT）
   recordCaptureFps: 0       # record 模式 MediaRecorder 采集帧率上限（0 = 跟随 video.fps）。
                            # 编码器跟不上时采集帧率本就低于设定值，调小只是把既成事实变显式：
                            # 编码量随之下降，录制期间 CPU/GPU 争缓减少（渲染上限会同步压到

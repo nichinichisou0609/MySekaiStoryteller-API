@@ -423,6 +423,9 @@ export default class VideoExportManager {
     // 流拷贝路径下按目标体积反推录制码率。仅在确认走 mp4 直录时调整——
     // 万一回退 webm + 重编码，被压低的中间码率会实打实损害最终画质。
     // 时长用的是录制前估算（TTS 实际时长通常不低于估算），留 15% 余量。
+    // 浏览器编码器是 VBR：简单画面上的实际产出常低于请求（服务器实测
+    // 请求 2.9Mbps 只出 2.1Mbps），overshoot 把请求抬高让复杂画面多分比特；
+    // 体积仍以目标为锚（编码器完全服从时最坏 ≈ 目标 × 0.85 × overshoot）。
     const targetSizeMb = options.recordTargetSizeMb ?? 0
     if (targetSizeMb > 0) {
       const streamCopyPlanned =
@@ -432,9 +435,10 @@ export default class VideoExportManager {
       if (streamCopyPlanned && totalDurationMs > 0) {
         const durationSec = totalDurationMs / 1000
         const audioBps = parseBitrateBps(options.apiAudioBitrate ?? '128k')
+        const overshoot = Math.max(1, Math.min(options.recordBitrateOvershoot ?? 1, 2))
         const targetBytes = targetSizeMb * 1024 * 1024
         const videoBytes = Math.max(targetBytes * 0.85 - (audioBps / 8) * durationSec, 0)
-        const derivedBps = Math.round((videoBytes * 8) / durationSec)
+        const derivedBps = Math.round(((videoBytes * 8) / durationSec) * overshoot)
         const finalBps = Math.max(
           MIN_TARGET_BITRATE_BPS,
           Math.min(derivedBps, options.recordBitrate ?? 8_000_000)
@@ -442,7 +446,9 @@ export default class VideoExportManager {
         recorder.setVideoBitrate(finalBps)
         this.logger.info(
           `Record size targeting: target=${targetSizeMb}MB, estimated=${durationSec.toFixed(1)}s, ` +
-            `audio=${(audioBps / 1000).toFixed(0)}kbps -> videoBitrate=${(finalBps / 1_000_000).toFixed(2)}Mbps`
+            `audio=${(audioBps / 1000).toFixed(0)}kbps, overshoot=${overshoot} -> ` +
+            `videoBitrate=${(finalBps / 1_000_000).toFixed(2)}Mbps ` +
+            `(base=${((videoBytes * 8) / durationSec / 1_000_000).toFixed(2)}Mbps)`
         )
       } else {
         this.logger.warn(
