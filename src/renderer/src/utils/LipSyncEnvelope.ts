@@ -31,8 +31,12 @@ export function buildLipSyncEnvelope(
   const values = new Float32Array(rms.length)
   let previous = 0
   for (let i = 0; i < rms.length; i++) {
-    const target = rms[i] <= gate ? 0 : Math.min(0.8, Math.pow((rms[i] - gate) / reference, 0.7) * 0.75)
-    const smoothing = 1 - Math.exp(-frameMs / (target > previous ? 25 : 45))
+    // 幅度收敛到 0.55 内、慢包络（开约 70ms / 合约 120ms）：跟随语音强弱但
+    // 不逐音节拍打，观感是"在说话"而不是"机关枪"
+    const target = rms[i] <= gate ? 0 : Math.min(0.55, Math.pow((rms[i] - gate) / reference, 0.7) * 0.5)
+    // 开 70ms / 语中收 120ms / 静音闭合 60ms：语内柔、停顿及时闭嘴
+    const tau = target > previous ? 70 : target === 0 ? 60 : 120
+    const smoothing = 1 - Math.exp(-frameMs / tau)
     previous += (target - previous) * smoothing
     if (previous < 0.015) previous = 0
     values[i] = previous
@@ -54,13 +58,15 @@ export function sampleTextMouth(text: string, elapsedMs: number, durationMs: num
   const speechMs = Math.max(1, durationMs - Math.min(800, durationMs * 0.2))
   if (elapsedMs >= speechMs) return 0
   const characters = Array.from(text)
-  const phase = (elapsedMs / speechMs) * characters.length
-  const index = Math.min(characters.length - 1, Math.floor(phase))
+  // 每个音节至少约 170ms：字符映射到慢音节序列，避免逐字快速开合
+  const syllableCount = Math.max(2, Math.ceil(speechMs / 170))
+  const phase = (elapsedMs / speechMs) * syllableCount
+  const syllable = phase - Math.floor(phase)
+  const index = Math.min(characters.length - 1, Math.floor((phase / syllableCount) * characters.length))
   const character = characters[index]
   if (/[\s，。！？、；：,.!?;:…—「」『』“”"'（）()]/u.test(character)) return 0
-  const syllable = phase - index
-  const attack = Math.min(1, syllable / 0.18)
-  const release = Math.max(0, Math.min(1, (0.92 - syllable) / 0.35))
-  const intensity = 0.32 + ((character.codePointAt(0) ?? 0) % 7) * 0.025
+  const attack = Math.min(1, syllable / 0.3)
+  const release = Math.max(0, Math.min(1, (0.85 - syllable) / 0.3))
+  const intensity = 0.2 + ((character.codePointAt(0) ?? 0) % 7) * 0.016
   return intensity * Math.min(attack, release)
 }
