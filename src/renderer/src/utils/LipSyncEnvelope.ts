@@ -27,23 +27,30 @@ export function buildLipSyncEnvelope(
   }
   const voiced = Array.from(rms).filter((value) => value > 0.008).sort((a, b) => a - b)
   const reference = Math.max(0.06, voiced[Math.floor(voiced.length * 0.9)] ?? 0.06)
-  const gate = Math.max(0.008, reference * 0.055)
+  const gate = Math.max(0.008, reference * 0.12)
   const values = new Float32Array(rms.length)
-  let previous = 0
-  // 先用 ~100ms 滑动平均抹掉音节级能量峰，包络只保留"说话活动度"：
-  // 配合慢时间常数（开 200ms / 语中收 260ms），连续说话时每秒至多
-  // 1~2 次可见开合；静音仍用 60ms 快收，句读和语音结束及时闭嘴。
-  const smoothWindow = Math.max(1, Math.round(100 / frameMs))
-  for (let i = 0; i < rms.length; i++) {
+  const smoothWindow = Math.max(1, Math.round(40 / frameMs))
+  const levelAt = (index: number): number => {
     let sum = 0
     let count = 0
-    for (let j = Math.max(0, i - smoothWindow + 1); j <= i; j++) {
+    for (let j = Math.max(0, index - smoothWindow + 1); j <= index; j++) {
       sum += rms[j]
       count++
     }
-    const level = sum / count
-    const target = level <= gate ? 0 : Math.min(0.55, Math.pow((level - gate) / reference, 0.7) * 0.5)
-    const tau = target > previous ? 200 : target === 0 ? 60 : 260
+    return sum / count
+  }
+  // 跟随音节强弱但保留起落：40ms 轻微平滑 + 开 90ms / 合 130ms 非对称包络。
+  // 连续说话时每秒可见 2~4 次开合，停顿和句读快速闭嘴（静音 60ms）。
+  let previous = 0
+  let silentFrames = 0
+  for (let i = 0; i < rms.length; i++) {
+    const level = levelAt(i)
+    const quiet = rms[i] <= gate
+    silentFrames = quiet ? silentFrames + 1 : 0
+    // 短暂能量低谷仍让嘴巴往下走一点；连续静音超过约 80ms 就彻底闭嘴。
+    const target = quiet ? 0 : Math.min(0.55, Math.pow((rms[i] - gate) / reference, 0.65) * 0.5)
+    const closing = quiet && silentFrames * frameMs >= 80
+    const tau = target > previous ? 90 : closing ? 45 : 130
     previous += (target - previous) * (1 - Math.exp(-frameMs / tau))
     if (previous < 0.015) previous = 0
     values[i] = previous
